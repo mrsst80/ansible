@@ -1,0 +1,21 @@
+---
+- name: change to upgrade content view of the host on the satellite
+  block:
+  - name: 
+    command: "/usr/bin/hammer host update --name {{ ansible_fqdn | lower }} --content-view {{ upgrade_contentview_name }} --organization {{ satellite_organization }}"
+    args:
+      chdir: /home/autoadm
+    register: upgrade_contentview_result
+    delegate_to: cleuprdsatellite.europa.internal
+
+  - name: print result
+    debug: 
+      var=upgrade_contentview_result
+
+  - name: refresh with subscription-manager 
+    command: "/usr/bin/subscription-manager refresh" 
+    when: upgrade_contentview_result.rc == 0
+
+  rescue:
+    - debug:
+        msg: "!!!Change content view of {{ ansible_fqdn }} to {{ upgrade_contentview_name }} failed!!!"

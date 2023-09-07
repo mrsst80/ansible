@@ -1,0 +1,48 @@
+---
+# tasks file for linux_upgrade_rhel7_to_rhel8
+- name: change to upgrade content view of the host on the satellite
+  block:
+  - name: 
+    command: "/usr/bin/hammer host update --name {{ ansible_fqdn | lower }} --content-view {{ upgrade_contentview_rhel8_name }} --organization {{ satellite_organization }}"
+    args:
+      chdir: /home/autoadm
+    register: upgrade_contentview_rhel8_result
+    delegate_to: cleuprdsatellite.europa.internal
+
+  - name: change default python
+    command: "/usr/sbin/alternatives --set python /usr/bin/python3"
+    vars:
+      ansible_python_interpreter: /usr/bin/python3
+
+  - name: print result
+    debug: 
+      var=upgrade_contentview_rhel8_result
+
+  - name: refresh with subscription-manager 
+    command: "/usr/bin/subscription-manager refresh" 
+    when: upgrade_contentview_rhel8_result.rc == 0
+
+  - name: refresh with subscription-manager 
+    command: "/usr/bin/subscription-manager release --unset" 
+    when: upgrade_contentview_rhel8_result.rc == 0
+
+  - name: clean yum cache
+    shell: yum clean all
+
+  - name: update RHEL8 to latest version
+    #yum:
+    dnf:
+      name: '*'
+      state: latest
+    async: 5000
+    poll: 30
+    register: update_result
+
+  - name: reboot after update
+    reboot:
+      reboot_timeout: 3600
+    when: update_result.changed
+
+  rescue:
+    - debug:
+        msg: "!!!Change content view of {{ ansible_fqdn }} to {{ upgrade_contentview_rhel8_name }} failed!!!"

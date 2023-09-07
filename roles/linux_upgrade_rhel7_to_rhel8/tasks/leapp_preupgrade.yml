@@ -1,0 +1,41 @@
+---
+# tasks file for linux_upgrade_rhel7_to_rhel8
+- name: Run leapp preupgrade
+  block:
+  - name: remove kernel modules, which are not present in RHEL8
+    modprobe:
+      name: "{{ item }}"
+      state: absent
+    loop:
+      - floppy
+      - pata_acpi
+  
+  - name: Make sure remote root login is disabled
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^PermitRootLogin'
+      line: 'PermitRootLogin no'
+
+  - name: Make sure /var/log/leapp exist
+    file:
+      dest: /var/log/leapp
+      state: directory
+
+  - name: copy answerfile to /var/log/leapp
+    copy:
+      src: answerfile
+      dest: /var/log/leapp/answerfile
+
+  - name: leapp preupgrade --target 8.6
+    command: "/usr/bin/leapp preupgrade --target 8.6"
+    register: leapp_preupgrade_result
+    async: 5000
+    poll: 30
+
+  - name: print leapp_preupgrade result
+    debug: 
+      var=leapp_preupgrade_result
+
+  #rescue:
+  #  - debug:
+  #      msg: "!!!leap preupgrade failed!!!"

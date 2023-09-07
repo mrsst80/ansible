@@ -1,0 +1,17 @@
+---
+# tasks file for linux_upgrade_rhel7_to_rhel8
+- name: prepare and install leapp upgrade 
+  block:
+  - name: Enable rhel-7-server-extras-rpms
+    rhsm_repository:
+        name: rhel-7-server-extras-rpms
+
+  - name: install leapp-upgrade
+    yum:
+      name: leapp-upgrade
+      state: latest
+  
+  rescue:
+    - debug:
+        msg: "!!!Installation of leapp-upgrade failed!!!"
+

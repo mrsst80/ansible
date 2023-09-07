@@ -1,0 +1,26 @@
+---
+# tasks file for linux_upgrade_rhel7_to_rhel8
+- name: Run leapp upgrade
+  block:
+  - name: leapp upgrade --target 8.6
+    command: "/usr/bin/leapp upgrade --target 8.6"
+    register: leapp_upgrade_result
+    async: 5000
+    poll: 30
+
+  - name: print leapp_upgrade result
+    debug: 
+      var=leapp_upgrade_result
+
+  - name: create /.autorelabel
+    file:
+      dest: /.autorelabel
+      state: touch
+
+  - name: reboot 
+    reboot:
+      reboot_timeout: 5400
+
+  #rescue:
+  #  - debug:
+  #      msg: "!!!leap upgrade failed!!!"

@@ -1,0 +1,12 @@
+---
+# tasks file for linux_upgrade_rhel7_to_rhel8
+- name: Unarchive leapp-data
+  block:
+  - name: Unarchive leapp-upgrade
+    unarchive:
+      src: "{{ leapp_data_files }}"
+      dest: /etc/leapp/files/
+  
+  rescue:
+    - debug:
+        msg: "!!! Unarchive of leapp-data failed !!!"
