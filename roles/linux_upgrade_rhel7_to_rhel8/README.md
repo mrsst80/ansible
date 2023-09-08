@@ -13,11 +13,12 @@ Role Variables
 --------------
 
 Mandatory variables
+```
 upgrade_contentview_name       - name of the upgrade content view
 upgrade_contentview_rhel8_name - target content view to be configured after the upgrade
 satellite_organization         - organization name configured in satellite
 satellite_server               - hostname of the satellite server
-
+```
 Dependencies
 ------------
 
