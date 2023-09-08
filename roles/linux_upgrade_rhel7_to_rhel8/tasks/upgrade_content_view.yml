@@ -6,7 +6,7 @@
     args:
       chdir: /home/autoadm
     register: upgrade_contentview_result
-    delegate_to: cleuprdsatellite.europa.internal
+    delegate_to: "{{ satellite_server }}"
 
   - name: print result
     debug: 
