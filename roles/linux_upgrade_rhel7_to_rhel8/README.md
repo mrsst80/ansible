@@ -1,31 +1,59 @@
 Role Name
 =========
 
-A brief description of the role goes here.
+This role automates upgrade process of Red Hat Enterprise Linux from version 7 to version 8.
 
 Requirements
 ------------
 
-Any pre-requisites that may not be covered by Ansible itself or the role should be mentioned here. For instance, if the role uses the EC2 module, it may be a good idea to mention in this section that the boto package is required.
+The role uses leap-upgrade tool and preconfigured internal satellite server. Satellite must have configured migration convent view, which includes RHEL7 and RHEL8 repositories as per Red Hat documentation. The target RHEL8 repositories must be 8.6. 
+The ansible_user configured to connect to satellite server, must have permission to use hammer tool without password. 
 
 Role Variables
 --------------
 
-A description of the settable variables for this role should go here, including any variables that are in defaults/main.yml, vars/main.yml, and any variables that can/should be set via parameters to the role. Any variables that are read from other roles and/or the global scope (ie. hostvars, group vars, etc.) should be mentioned here as well.
+Mandatory variables
+```
+upgrade_contentview_name       - name of the upgrade content view
+upgrade_contentview_rhel8_name - target content view to be configured after the upgrade
+satellite_organization         - organization name configured in satellite
+satellite_server               - hostname of the satellite server
+```
+Boolean variables, which control stages of Red Hat Linux Upgrade:
+```
+leapp_install: true        - install leapp-upgrade package
+leapp_data: true           - extract leapp-data file
+kernel_versions: true      - remove kernel and kernel-devel package versions not in use
+upgrade_content_view: true - upgrade host conntent view to upgrade one
+leapp_preupgrade: true
+leapp_upgrade: true
+leapp_postupgrade: true
 
+```
 Dependencies
 ------------
 
-A list of other roles hosted on Galaxy should go here, plus any details in regards to parameters that may need to be set for other roles, or variables that are used from other roles.
+N/A
 
 Example Playbook
 ----------------
 
-Including an example of how to use your role (for instance, with variables passed in as parameters) is always nice for users too:
+Usage:
 
     - hosts: servers
+      become: true
+      gather_facts: true
+      vars:
+        leapp_install: true
+        leapp_data: true
+        kernel_versions: true
+        upgrade_content_view: true
+        leapp_preupgrade: true
+        leapp_upgrade: true
+        leapp_postupgrade: true
+
       roles:
-         - { role: username.rolename, x: 42 }
+         - role: linux_upgrade_rhel7_to_rhel8
 
 License
 -------
