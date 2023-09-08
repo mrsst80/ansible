@@ -27,7 +27,7 @@ kernel_versions: true      - remove kernel and kernel-devel package versions not
 upgrade_content_view: true - upgrade host conntent view to upgrade one
 leapp_preupgrade: true     - preupgrade tasks including leapp preupgrade 
 leapp_upgrade: true        - actual upgrade and reboot in the end
-leapp_postupgrade: true    - post upgrade tasks including change of the content view from upgrade to new rhel8 only based
+leapp_postupgrade: true    - post upgrade tasks including change of the content view from upgrade to new rhel8 only based, and update to the latest published RHEL8 version
 oscap_hardening: false     - optional security hardening task, which require customzied oscap file
 
 ```
