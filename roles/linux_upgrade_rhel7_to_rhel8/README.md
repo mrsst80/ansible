@@ -6,7 +6,7 @@ This role automates upgrade process of Red Hat Enterprise Linux from version 7 t
 Requirements
 ------------
 
-The role uses leap-upgrade tool and preconfigured internal satellite server. Satellite must have configured migration convent view, which includes RHEL7 and RHEL8 repositories as per Red Hat documentation. The target RHEL8 repositories must be 8.6. 
+The role uses leap-upgrade tool and preconfigured internal satellite server. Satellite must have configured migration convent view, which includes RHEL7 and RHEL8 repositories as per Red Hat documentation. The target RHEL8 repositories must be version 8.6. 
 The ansible_user configured to connect to satellite server, must have permission to use hammer tool without password. 
 
 Role Variables
@@ -19,15 +19,16 @@ upgrade_contentview_rhel8_name - target content view to be configured after the 
 satellite_organization         - organization name configured in satellite
 satellite_server               - hostname of the satellite server
 ```
-Boolean variables, which control stages of Red Hat Linux Upgrade:
+Boolean variables, which control stages of Red Hat Linux Upgrade with their default values defined in default/main.yml:
 ```
 leapp_install: true        - install leapp-upgrade package
 leapp_data: true           - extract leapp-data file
 kernel_versions: true      - remove kernel and kernel-devel package versions not in use
 upgrade_content_view: true - upgrade host conntent view to upgrade one
-leapp_preupgrade: true
-leapp_upgrade: true
-leapp_postupgrade: true
+leapp_preupgrade: true     - preupgrade tasks including leapp preupgrade 
+leapp_upgrade: true        - actual upgrade and reboot in the end
+leapp_postupgrade: true    - post upgrade tasks including change of the content view from upgrade to new rhel8 only based
+oscap_hardening: false     - optional security hardening task, for which you need to upload your own customzied oscap file
 
 ```
 Dependencies
@@ -51,7 +52,7 @@ Usage:
         leapp_preupgrade: true
         leapp_upgrade: true
         leapp_postupgrade: true
-
+        oscap_hardening: false
       roles:
          - role: linux_upgrade_rhel7_to_rhel8
 
