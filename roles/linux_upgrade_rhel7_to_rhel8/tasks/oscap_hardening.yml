@@ -16,7 +16,7 @@
       dest: /home/autoadm/ssg-rhel8-ds-tailored_v1_combined.xml
 
   - name: run the hardening on RHEL8
-    command: '/usr/bin/oscap xccdf eval --remediate --profile xccdf_org.ssgproject.content_profile_cis_canadalifeeurope --results scan-xccdf-cis-rhel8_canadalife_tailored_results.xml /home/autoadm/ssg-rhel8-ds-tailored_v1_combined.xml' 
+    command: '/usr/bin/oscap xccdf eval --remediate --profile xccdf_org.ssgproject.content_profile_cis_custom --results scan-xccdf-cis-rhel8_custom_tailored_results.xml /home/autoadm/ssg-rhel8-ds-tailored_v1_combined.xml' 
     args:
       chdir: /home/autoadm
     register: oscap_result
@@ -28,7 +28,7 @@
       var=oscap_result
 
   - name: generate report
-    command: '/usr/bin/oscap xccdf generate report scan-xccdf-cis-rhel8_canadalife_tailored_results.xml > /home/autoadm/scan-xccdf-cis-rhel8_canadalife_tailored_results.html'
+    shell: '/usr/bin/oscap xccdf generate report scan-xccdf-cis-rhel8_custom_tailored_results.xml > /home/autoadm/scan-xccdf-cis-rhel8_custom_tailored_results.html'
     args:
       chdir: /home/autoadm
     ignore_errors: yes
