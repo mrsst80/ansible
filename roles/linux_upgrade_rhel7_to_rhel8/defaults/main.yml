@@ -12,7 +12,6 @@ oscap_hardening: false
 leapp_data_files: leapp-data-22.tar.gz
 upgrade_contentview_name: rhel7_to_rhel8_upgrade
 upgrade_contentview_rhel8_name: rhel8_x64
-rhel8_contentview_name: rhel8_x64
 satellite_organization: my_org
 
 satellite_server: hostname_of_satellite_server
