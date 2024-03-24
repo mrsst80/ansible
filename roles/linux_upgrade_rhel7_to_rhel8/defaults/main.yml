@@ -1,7 +1,7 @@
 ---
 # defaults file for linux_upgrade_rhel7_to_rhel8
 leapp_install: true
-leapp_data: true
+leapp_data: false
 kernel_versions: true
 upgrade_content_view: true
 leapp_preupgrade: true
