@@ -1,0 +1,153 @@
+#
+# README
+#
+# devops_setup_playbook.yml ansible playbook installs and setup or uninstall Azure selfhosted devops agents.
+# uninstall is performed if you specify tag <uninstall_agent>
+# The agents are connected via proxy, and also proxy is setup for .env files to be used by tools called by pipelines running.
+# Devops agent installation package must be downloaded and placed in the same directory where playbook is located.
+# You can chose how many agents to be setup by defining varibales number_of_agents and first_agent. Each agents will be installed in directory /opt/agentbuilds/Agent00<number>_serverhostname. By default 3 devops agents are installed, starting by number 1.
+#
+# MANDATORY VARIABLES 
+# 
+# pool_name: Name of the pool 
+# project_name: Name of the devops project in Azure DevOps 
+# pool_name: Name of the pool name defined in Azure DevOps 
+# pkg_name: devops_package_name, example - vsts-agent-linux-x64-3.225.0.tar.gz
+# proxy_url_hostname: proxy_address_hostname 
+# proxy_url_full: full proxy url - http://proxy_hostname:443 
+# token: token generated in azure, which has rights to register agents in the project
+#
+# ADDITIONAL VARIABLES
+# number_of_agents: number of agents to be installed
+# first_agent: number of the first agent. If you define 2 and number of the agents is 3 for examples, the agents numbers will be 2 3 4 
+#
+---
+- name: Install and configure Azure selfhosted devops agents
+  hosts: "{{ target_hosts | default('localhost') }}"
+  become: true
+  gather_facts: true
+  vars:
+    number_of_agents: 3
+    first_agent: 1
+    pool_name: <agent_pool_name>
+    project_name: <project_name>
+    pkg_name: <vsts_name.tgz>
+    proxy_url_hostname: proxy_hostname
+    proxy_url_full: http://proxy_hostname:443
+    token: <add_token_to_connet_to_devops>
+    proxy_env:
+      NO_PROXY: /var/run/docker.sock,localaddress,localhost,.internal,.azurewebsites.net,127.0.0.1,10.0.0.0/8,172.0.0.0/16,192.168.0.0/16
+      http_proxy: http://{{ proxy_url_hostname }}:80/
+      HTTPS_PROXY: http://{{ proxy_url_hostname }}:443/
+      https_proxy: http://{{ proxy_url_hostname }}:443/
+      no_proxy: /var/run/docker.sock,localaddress,localhost,.internal,127.0.0.1,10.0.0.0/8,172.0.0.0/16,192.168.0.0/16
+      HTTP_PROXY: http://{{ proxy_url_hostname }}:80/
+      AZP_AGENT_USE_LEGACY_HTTP: true
+
+  tasks:
+    - debug:
+        msg: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+
+    - name: Create Agent directories
+      file:
+        dest: /opt/agentbuilds/Agent00{{ item }}_{{ ansible_hostname }}
+        state: directory
+        owner: selfhosted
+        group: selfhosted
+      loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+      tags: create_agent_directories
+
+    - name: Extract the agent package
+      unarchive:
+        src: "{{ pkg_name }}"
+        dest: /opt/agentbuilds/Agent00{{ item }}_{{ ansible_hostname }}/
+        owner: selfhosted
+        group: selfhosted
+      loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+      tags: extract_agent_install_package
+        
+    - name: Setup the agent
+      command: ./config.sh --unattended  --proxyurl {{ proxy_url_full }} --url https://{{ project_name }}.visualstudio.com --auth pat --token {{ token }} --pool {{ pool_name }} --agent Agent00{{ item }}_{{ ansible_hostname }}
+      args:
+        chdir: /opt/agentbuilds/Agent00{{ item }}_{{ ansible_hostname }}/
+      environment: "{{ proxy_env }}"
+      become: yes
+      become_user: selfhosted
+      loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+      tags: setup_agent
+
+    - name: Setup the agent to start as a service
+      command: sudo ./svc.sh install
+      args:
+        chdir: /opt/agentbuilds/Agent00{{ item }}_{{ ansible_hostname }}/
+      environment: "{{ proxy_env }}"
+      become: yes
+      become_user: selfhosted
+      loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+      tags: systemd_agent
+    
+    - name: set AZP_AGENT_USE_LEGACY_HTTP=true in runsvc.sh
+      lineinfile:
+        path: /opt/agentbuilds/Agent00{{ item }}_{{ ansible_hostname }}/runsvc.sh
+        regexp: '^export AZP_AGENT_USE_LEGACY_HTTP=true'
+        insertafter: '# insert anything to setup env when running as a service'
+        line: 'export AZP_AGENT_USE_LEGACY_HTTP=true'
+      loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+      become: yes
+      become_user: selfhosted
+      tags: setup_runsvc
+
+    - name: Setup proxy in .env files of the agents
+      blockinfile:
+        path: /opt/agentbuilds/Agent00{{ item }}_{{ ansible_hostname }}/.env
+        marker: "# <!-- {mark} ANSIBLE MANAGED BLOCK -->"
+        block: |
+          http_proxy={{ proxy_url }}:80/
+          https_proxy={{ proxy_url }}:443/
+          no_proxy="/var/run/docker.sock,localaddress,localhost,.internal,127.0.0.1,10.0.0.0/8,172.0.0.0/16,192.168.0.0/16"
+          HTTP_PROXY={{ proxy_url }}:80/
+          HTTPS_PROXY={{ proxy_url }}:443/
+          NO_PROXY="/var/run/docker.sock,localaddress,localhost,.internal,.azurewebsites.net,127.0.0.1,10.0.0.0/8,172.0.0.0/16,192.168.0.0/16"
+      loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+      tags: set_proxy_env 
+
+    - name: Setup the agent to start as a service
+      command: ./env.sh
+      args:
+        chdir: /opt/agentbuilds/Agent00{{ item }}_{{ ansible_hostname }}/
+      environment: "{{ proxy_env }}"
+      become: yes
+      become_user: selfhosted
+      loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+      tags: run_env
+
+    - name: Start up the agent
+      service:
+        name: vsts.agent.{{ project_name | lower }}.{{ pool_name }}.Agent00{{ item }}_{{ ansible_hostname }}.service
+        enabled: true
+        state: started
+      loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+      tags: startup_agent
+
+    - name: Stop/Uninstall the agent
+      block:
+      - name: stop/disable 
+        command: sudo ./svc.sh uninstall
+        args:
+          chdir: /opt/agentbuilds/Agent00{{ item }}_{{ ansible_hostname }}/
+        environment: "{{ proxy_env }}"
+        become: yes
+        become_user: selfhosted
+        loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+        
+      - name: uninstall the agent
+        command: ./config.sh remove --auth pat --token {{ token }} 
+        args:
+          chdir: /opt/agentbuilds/Agent00{{ item }}_{{ ansible_hostname }}/
+        environment: "{{ proxy_env }}"
+        become: yes
+        become_user: selfhosted
+        loop: "{{ range(first_agent,number_of_agents+first_agent,1) | list}}"
+
+      tags: [ never, uninstall_agent ]
+
