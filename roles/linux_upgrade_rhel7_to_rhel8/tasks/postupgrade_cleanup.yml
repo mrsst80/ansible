@@ -1,0 +1,103 @@
+---
+- name: post RHEL7 upgrade tasks
+  block:
+  - name: remove all packages from exclude list
+    command: "yum config-manager --save --setopt exclude=''"
+
+  - name: generate list of old kernel versions
+    find: 
+      paths: /lib/modules
+      recurse: no
+      file_type: directory
+      patterns: "^3.*"
+      use_regex: true
+    register: ls_output
+
+  - name: generate list of old rescue kernel and ram disk
+    find:
+      paths: /boot
+      recurse: no
+      patterns: "*rescue*"
+    register: rescue_list
+
+  - name: generate list of remaining el7 modules directories
+    find:
+      paths: /lib/modules
+      recurse: no
+      file_type: directory
+      patterns: "*el7*"
+    register: el7_modules_dirs
+
+  - name: remove weak-modules from the old kernel
+    command: "/usr/sbin/weak-modules --remove-kernel {{ item.path | basename }}"
+    loop: "{{ ls_output.files }}"
+    when: ls_output.files 
+
+  - name: remove old kernel from boot menu
+    command: "/bin/kernel-install remove {{ item.path | basename }} /lib/modules/{{ item.path | basename }}/vmlinuz"
+    loop: "{{ ls_output.files }}"
+    when: ls_output.files
+
+  - name: remove leapp packages
+    dnf:
+      name: "{{ item }}"
+      state: absent
+    loop:
+      - leapp-deps-el8
+      - leapp-repository-deps-el8
+      - leapp
+      - leapp-deps
+      - leapp-upgrade-el7toel8
+      - leapp-upgrade-el8toel9-deps
+      - python2-leapp
+
+  - name: remove leapp related directories
+    file:
+      name: "{{ item }}"
+      state: absent
+    loop:
+      - /var/log/leapp 
+      - /root/tmp_leapp_py3
+      - /var/lib/leapp
+
+  - name: remove old rescue kernel and ram disk 
+    file:
+      name: "{{ item.path }}"  
+      state: absent
+    loop:  "{{ rescue_list.files }}"
+    when: rescue_list.files
+    register: remove_rescue
+
+  - name: generate new rescue kernel and ram disk
+    command: '/usr/lib/kernel/install.d/51-dracut-rescue.install add "$(uname -r)" /boot "/boot/vmlinuz-$(uname -r)"'
+    when: remove_rescue.changed
+
+  - name: remove remaining el7 modules dirs
+    file:
+      name: "{{ item.path }}"
+      state: absent
+    loop: "{{ el7_modules_dirs.files }}"
+    when: el7_modules_dirs.files
+    
+  - debug:
+      #msg: "/usr/sbin/weak-modules --remove-kernel {{ item.path | basename }}"
+      msg: "/bin/kernel-install remove {{ item.path | basename }} /lib/modules/{{ item.path | basename }}/vmlinuz"
+      #msg: "{{ item | type_debug }}"
+      #msg: "{{ ls_output.files | type_debug }}"
+    loop:  "{{ ls_output.files }}"
+    tags: test
+
+  - debug:
+      msg: "{{ item.path }}"
+    tags: test1
+    when: rescue_list.files
+
+  - debug:
+      msg: "{{ el7_modules_dirs }}"
+    tags: test2
+    when: el7_modules_dirs.files
+
+  rescue:
+  - debug:
+      msg: "!!!Postupgrade cleanup failed!!!"
+

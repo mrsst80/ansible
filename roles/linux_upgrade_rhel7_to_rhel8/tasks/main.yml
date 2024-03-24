@@ -38,3 +38,7 @@
 - name: 9 oscap hardening
   include_tasks: oscap_hardening.yml
   when: oscap_hardening
+
+- name: 10 postupgrade cleanup
+  include_tasks: postupgrade_cleanup.yml
+  when: postupgrade_cleanup

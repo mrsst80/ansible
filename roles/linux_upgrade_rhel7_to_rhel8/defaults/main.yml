@@ -7,6 +7,7 @@ upgrade_content_view: true
 leapp_preupgrade: true
 leapp_upgrade: true
 leapp_postupgrade: true
+postupgrade_cleanup: true
 oscap_hardening: false
 
 leapp_data_files: leapp-data-22.tar.gz
