@@ -69,7 +69,7 @@
     register: remove_rescue
 
   - name: generate new rescue kernel and ram disk
-    command: '/usr/lib/kernel/install.d/51-dracut-rescue.install add "$(uname -r)" /boot "/boot/vmlinuz-$(uname -r)"'
+    command: '/usr/lib/kernel/install.d/51-dracut-rescue.install add $(uname -r) /boot /boot/vmlinuz-$(uname -r)'
     when: remove_rescue.changed
 
   - name: remove remaining el7 modules dirs
