@@ -1,0 +1,14 @@
+---
+# tasks file for ms_devops_setup
+- name: Abort the Role if the target host is not RedHat Linux
+  fail:
+    msg: "Target system is not RedHat Linux"
+  when: ansible_facts['os_family'] != 'RedHat'
+
+- name: setup rhel8 based server
+  include_tasks: rhel8.yml
+  when: ansible_distribution_major_version == '8'
+
+- name: setup rhel9 based server
+  include_tasks: rhel9.yml
+  when: ansible_distribution_major_version == '9'

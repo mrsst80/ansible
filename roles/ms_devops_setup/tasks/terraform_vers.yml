@@ -1,0 +1,20 @@
+- name: Setup terraform versions
+  block:
+  - name: install terraform version {{ item }}
+    dnf:
+      name: terraform = {{ item }}
+      state: present
+  
+  - name: copy terraform binary to /home/selfhosted/Terraform_bin/
+    copy:
+      src: /usr/bin/terraform
+      dest: /home/selfhosted/Terraform_bin/terraform-v{{ item }}
+      mode: '0755'
+      owner: selfhosted
+      group: selfhosted
+      remote_src: yes
+
+  - name: install terraform version {{ item }}
+    dnf:
+      name: terraform = {{ item }}
+      state: absent

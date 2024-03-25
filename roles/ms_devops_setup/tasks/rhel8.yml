@@ -1,0 +1,269 @@
+---
+# tasks file for ms_devops_setup
+- name: Enable dnf repos
+  rhsm_repository:
+    name: "{{ item }}"
+    state: enabled
+  loop: "{{ repo_list_rhel8_rhel9 }}"
+  tags: enable_repos
+
+- name: Install software needed by devops
+  yum:
+    name: "{{ software_list_rhel8_rhel9 }}"
+    state: latest
+  register: pkg_install
+  tags: yum_install_rhel8
+  
+- name: Install moduled software
+  dnf:
+    name: "@{{ item.key  }}:{{ item.value.ver }}"
+    state: present
+  loop: "{{ lookup('dict', software_moduled_rhel8_rhel9) }}"
+
+- name: Setup FS layout
+  block:
+  - name: Create datavg volume group
+    lvg:
+      vg: "{{ vgs }}"
+      pvs: "{{ pvs_rhel8 }}"
+
+  - name: Create logical volumes
+    lvol:
+      vg: "{{ vgs }}"
+      lv: "{{ item.key }}"
+      size: "{{ item.value.size }}"
+    loop: "{{ lookup('dict', lvs, wantlist=True) }}"
+    tags: create_lv
+
+  - name: Create file systems
+    filesystem:
+      fstype: "{{ item.value.fs_type }}"
+      dev: /dev/mapper/{{ vgs }}-{{item.key }}
+    loop: "{{ lookup('dict', lvs, wantlist=True) }}"
+    tags: create_fs
+
+  - name: Mount file systems
+    ansible.posix.mount:
+      src: /dev/mapper/{{ vgs }}-{{item.key }}
+      path: "{{item.value.mount_point }}"
+      fstype: "{{item.value.fs_type }}"
+      state: mounted
+    loop: "{{ lookup('dict', lvs, wantlist=True) }}"
+    tags: fs_mount
+
+  tags: fs_setup
+
+- name: Ensure group {{ devops_group }} exists
+  group:
+    name: "{{ devops_group }}"
+    state: present
+
+- name: Add the user selfhosted
+  user:
+    name: "{{ devops_user }}"
+    shell: /bin/bash
+    group: "{{ devops_group }}"
+    groups: wheel,docker
+    append: yes
+
+- name: Add selfhosted to sudoers file
+  lineinfile:
+    path: /etc/sudoers
+    regexp: '^{{ devops_user }}'
+    line: '{{ devops_user }} ALL=(ALL)       NOPASSWD: ALL'
+
+- name: Setup docker to use proxy and start it
+  block:
+    - name: create /etc/systemd/system/docker.service.d directory
+      file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+
+    - name: create file /etc/systemd/system/docker.service.d/http-proxy.conf
+      template:
+        src: http-proxy.conf.j2
+        dest: /etc/systemd/system/docker.service.d/http-proxy.conf
+
+    - name: restart docker service
+      systemd:
+        state: restarted
+        daemon_reload: yes
+        name: docker
+
+    - name: Start docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+  tags: setup_docker
+
+- name: Insert path and proxy settings in .bashrc
+  blockinfile:
+    path: /home/{{ devops_user }}/.bashrc
+    marker: "# <!-- {mark} ANSIBLE MANAGED BLOCK -->"
+    block: |
+      export AZP_AGENT_USE_LEGACY_HTTP=true
+      export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-bundle.crt
+
+      PATH=$PATH:/opt/azure-functions-cli
+      PATH=$PATH:/opt/CARKaim/sdk/
+      export PATH
+
+      export http_proxy="{{ proxy_url }}:80/"
+      export https_proxy="{{ proxy_url }}:443/"
+      export no_proxy="/var/run/docker.sock,localaddress,localhost,.internal,127.0.0.1,10.0.0.0/8,172.0.0.0/16,192.168.0.0/16"
+      export HTTP_PROXY="{{ proxy_url }}:80/"
+      export HTTPS_PROXY="{{ proxy_url }}:443/"
+      export NO_PROXY="/var/run/docker.sock,localaddress,localhost,.internal,.azurewebsites.net,127.0.0.1,10.0.0.0/8,172.0.0.0/16,192.168.0.0/16"
+  tags: set_bashrc
+
+- name: Add libcurl to library path
+  block:
+  - name: Create libcurl config file
+    copy:
+      content: "{{ libcurl_path }}"
+      dest: "{{ libcurl_conf }}"
+      owner: root
+      group: root
+      mode: '0755'
+    register: libcurl_in_config
+
+  - name: execute ldconfig
+    command: '/usr/sbin/ldconfig'
+    when: libcurl_in_config.changed
+
+  tags: libcurl
+
+- name: Set default java to {{ default_java_rhel8 }}
+  command: 'alternatives --set java {{ default_java_rhel8 }}'
+  tags: default_java
+
+- name: Setup {{ apache_maven }}
+  block:
+  - name: Copy/Extract {{ apache_maven }}
+    unarchive:
+      src: "{{ apache_maven }}"
+      dest: /opt
+
+  - name: create symbolic link
+    file:
+      src: /opt/{{ apache_maven_dir }}
+      dest: /opt/maven
+      state: link
+  tags: maven
+
+- name: Copy twistcli to /home/{{ devops_user }}/.local/bin
+  block:
+  - name: Create /home/{{ devops_user }}/.local/bin directory
+    file:
+      path: /home/{{ devops_user }}/.local/bin
+      state: directory
+
+  - name: Copy twistcli
+    copy:
+      src: twistcli
+      dest: /home/{{ devops_user }}/.local/bin
+      mode: '0755'
+      owner: "{{ devops_user }}"
+      group: "{{ devops_user }}"
+
+  tags: twistcli
+
+- name: setup /opt/azure-functions-cli
+  block:
+  - name: create /opt/azure-functions-cli
+    file:
+      path: /opt/azure-functions-cli
+      state: directory
+
+  - name:
+    unarchive:
+      src: "{{ azure_functions_cli }}"
+      dest: /opt/azure-functions-cli
+
+  - name:
+    file:
+      path: /opt/azure-functions-cli/func
+      mode: '1755'
+      owner: "{{ devops_user }}"
+      group: "{{ devops_user }}"
+
+  tags: azure_functions
+
+- name: Install COMPANY certs
+  block:
+  - name: copy certs
+    copy:
+      src: "{{ item }}"
+      dest: /etc/pki/ca-trust/source/anchors/
+    loop: "{{ ssl_certs }}"
+    register: ssl_copy
+
+  - name: /bin/update-ca-trust enable
+    command: '/bin/update-ca-trust enable'
+    when: ssl_copy.changed
+
+  - name: /bin/update-ca-trust extract
+    command: '/bin/update-ca-trust extract'
+    when: ssl_copy.changed
+
+  tags: ssl_certs_install
+
+- name: Copy/Extract {{ az_modules }}
+  block:
+  - name: Create Az modules directory
+    file:
+      path: /usr/local/share/powershell/Modules/
+      state: directory
+
+  - unarchive:
+      src: "{{ az_modules }}"
+      dest: /usr/local/share/powershell/Modules/
+
+  tags: az_modules
+
+- name: Setup CyberArkAim
+  block:
+  - name: create /tmp/cyberarkaim
+    file:
+      dest: /tmp/cyberarkaim
+      state: directory
+
+  - name: Extract installation file
+    unarchive:
+      src: "{{ cyberarkadim_install }}"
+      dest: /tmp/cyberarkaim
+
+  - name: create file /var/tmp/aimparams
+    template:
+      src: aimparams.j2
+      dest: /var/tmp/aimparms
+
+  - name: set execute permissions to /tmp/cyberarkaim/RHELinux-Intel64/CreateCredFile
+    file:
+      dest: /tmp/cyberarkaim/RHELinux-Intel64/CreateCredFile
+      mode: '0755'
+
+  - name: Imorrt GPG key
+    rpm_key:
+      state: present
+      key: /tmp/cyberarkaim/RHELinux-Intel64/RPM-GPG-KEY-CyberArk
+
+  - name: install cyberarkaim rpm
+    yum:
+      name: /tmp/cyberarkaim/RHELinux-Intel64/CARKaim-11.02.0.22.x86_64.rpm
+      state: present
+
+  - name: create /tmp/cyberarkaim
+    file:
+      dest: /tmp/cyberarkaim
+      state: absent
+
+  tags: setup_cyberarkaim
+
+- name: setup multiple versions of terrafom under /home/selfhosted/Terraform_bin/
+  include_tasks: terraform_vers.yml
+  loop: "{{ terraform_versions }}"
+  tags: setup_terraform
+

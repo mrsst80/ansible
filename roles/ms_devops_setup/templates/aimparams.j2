@@ -1,0 +1,38 @@
+[Main]
+AcceptCyberArkEULA=yes
+CreateVaultEnvironment=No
+LicensedProducts=AIM
+#CredFilePath=<Full path of file that contains credentials of Vault user that will be used to create the Provider Vault environment>
+#VaultFilePath=<Full path of Vault file that describes the Vault the Provider will work with>
+OverrideExistingConfFile=no
+AppProviderUserLocation=Applications
+### The location in the Vault where OPM applicative user will be created.
+### The OPM User can be moved to any location in the Vault hierarchy, but only applies OPM rules to any users at its level or below
+OPMUserLocation=\
+#HardenFSPermissions=no
+
+### In Repair/Upgrade the following parameters will be read from the existing "/etc/opt/CARKaim/conf/basic_appprovider.conf"
+### file unless they are uncommented and contain different values
+#AppProviderConfSafe=AppProviderConf
+#MainAppProviderConfFile=main_appprovider.conf.linux.<version>
+#MainOPMConfFile=main_opm.conf.linux.<version>
+AppProviderUser=Prov_{{ inventory_hostname }}
+#OPMUser=OPM_<host_name>
+#PIMConfigurationSafe=PVWAConfig
+#PIMConfigurationFolder=Root
+#PIMPVConfigurationFileName=PVConfiguration.xml
+#PIMPoliciesConfigurationFileName=Policies.xml
+### MoveOPMUserLocationOnUpgradeOrRepair
+### Whether to move the OPM user location in the Vault
+### During an upgrade or repair procedure to the location defined in OPMUserLocation.
+### The OPM User can be moved to any location in the Vault hierarchy, but only applies OPM rules to any users at its level or below.
+#MoveOPMUserLocationOnUpgradeOrRepair=Yes
+###
+
+[AIM]
+CacheLevel=persistent
+CacheRefreshInterval=3
+
+[PIMSu]
+PIMSuCacheLevel=persistent
+PIMSuCacheRefreshInterval=3
