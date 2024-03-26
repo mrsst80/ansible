@@ -9,9 +9,8 @@
 #
 # MANDATORY VARIABLES 
 # 
-# pool_name: Name of the pool 
-# project_name: Name of the devops project in Azure DevOps 
 # pool_name: Name of the pool name defined in Azure DevOps 
+# project_name: Name of the devops project in Azure DevOps 
 # pkg_name: devops_package_name, example - vsts-agent-linux-x64-3.225.0.tar.gz
 # proxy_url_hostname: proxy_address_hostname 
 # proxy_url_full: full proxy url - http://proxy_hostname:443 
