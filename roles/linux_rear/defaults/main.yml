@@ -1,0 +1,18 @@
+---
+# defaults file for linux_rear
+run_rear: true
+rear_log_file: /tmp/script_rear.log
+rear_target_cmd: /home/stefan/rear.sh
+rear_log_dir: /tmp/rear/rear_{{ '%d%m%Y' | strftime }}
+dbr_log_file: /tmp/data_before_reboot.log
+dbr_target_cmd: /home/stefan/dbr.sh
+dbr_log_dir: /tmp/dbr/rear_{{ '%d%m%Y' | strftime }}
+#mngm_server: lnxuataa0353.europa.internal
+mngm_server: localhost
+#facter_virtual: vmware
+print_debug: true
+exclude_list: lnxdevao3084.europa.internal
+success_evaluation: 'Archived'
+rhel7_tmp_dir: '/tmp'
+rhel8_tmp_dir: '/tmp'
+rhel9_tmp_dir: '/var/tmp'

@@ -1,0 +1,6 @@
+---
+# tasks file for linux_rear
+- name: run rear backup
+  include_tasks: rear.yml
+  when: run_rear
+

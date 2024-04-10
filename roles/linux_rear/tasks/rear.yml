@@ -1,0 +1,77 @@
+- name: Run rear backup
+  block:
+    - name: remount /tmp with exec options
+      ansible.posix.mount:
+        path: /tmp
+        state: remounted
+        opts: exec
+      loop: "{{ ansible_mounts }}"
+      loop_control:
+        index_var: i
+      when: ansible_mounts[i].mount == '/tmp' and 'noexec' in ansible_mounts[i].options
+      register: remount_tmp
+ 
+    - debug:
+        var=remount_tmp
+      when: print_debug
+
+    - name: Run rear backup
+      shell: 'rear -d -v mkbackup'
+      async: 9000
+      poll: 30
+      environment:
+        TMPDIR: /tmp
+      register: rear_result
+      ignore_errors: true
+
+    - debug:
+        var=rear_result
+      when: print_debug
+
+    - debug:
+        var=rear_result.stdout
+      when: print_debug
+
+    - name: remount /tmp with noexec option if it was remounted with exec earlier
+      mount:
+        path: /tmp
+        state: remounted
+        opts: noexec
+      loop: "{{ ansible_mounts }}"
+      loop_control:
+        index_var: i
+      when: ansible_mounts[i].mount == '/tmp' and 'noexec' in ansible_mounts[i].options and remount_tmp.results[i].changed
+
+    - name: find rear folder in /tmp
+      find:
+        paths: "/tmp/"
+        patterns: 'rear.*'
+        use_regex: true
+        file_type: directory
+      register: found_reardir
+
+    - debug:
+        var=found_reardir
+      when: print_debug
+
+    - name: delete rear folder in /tmp
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ found_reardir.files }}"
+      when: found_reardir.matched != '0'
+ 
+    - debug:
+        msg: "Rear backup was successful"
+      when: success_evaluation in rear_result.stdout
+      ignore_errors: true
+
+    - fail:
+        msg: "Rear backup FAILED! Check log  for details."
+      when: success_evaluation not in rear_result.stdout
+      ignore_errors: true
+
+  rescue:
+    - debug:
+        msg: "Rear backup failed!"
+  when: ansible_virtualization_type != 'VirtualPC'
