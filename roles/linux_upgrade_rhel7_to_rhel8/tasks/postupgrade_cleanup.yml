@@ -1,6 +1,9 @@
 ---
 - name: post RHEL7 upgrade tasks
   block:
+  - name: gather facts again
+    setup:
+
   - name: remove all packages from exclude list
     command: "yum config-manager --save --setopt exclude=''"
 
@@ -12,6 +15,7 @@
       patterns: "^3.*"
       use_regex: true
     register: ls_output
+    tags: reg
 
   - name: generate list of old rescue kernel and ram disk
     find:
@@ -19,6 +23,7 @@
       recurse: no
       patterns: "*rescue*"
     register: rescue_list
+    tags: reg1
 
   - name: generate list of remaining el7 modules directories
     find:
@@ -27,6 +32,7 @@
       file_type: directory
       patterns: "*el7*"
     register: el7_modules_dirs
+    tags: reg2
 
   - name: remove weak-modules from the old kernel
     command: "/usr/sbin/weak-modules --remove-kernel {{ item.path | basename }}"
@@ -69,7 +75,7 @@
     register: remove_rescue
 
   - name: generate new rescue kernel and ram disk
-    command: '/usr/lib/kernel/install.d/51-dracut-rescue.install add $(uname -r) /boot /boot/vmlinuz-$(uname -r)'
+    command: "/usr/lib/kernel/install.d/51-dracut-rescue.install add {{ ansible_kernel }} /boot /boot/vmlinuz-{{ ansible_kernel }}"
     when: remove_rescue.changed
 
   - name: remove remaining el7 modules dirs
