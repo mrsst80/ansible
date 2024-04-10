@@ -64,12 +64,10 @@
     - debug:
         msg: "Rear backup was successful"
       when: success_evaluation in rear_result.stdout
-      ignore_errors: true
 
     - fail:
         msg: "Rear backup FAILED! Check log  for details."
       when: success_evaluation not in rear_result.stdout
-      ignore_errors: true
 
   rescue:
     - debug:
