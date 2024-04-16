@@ -6,7 +6,7 @@
    upgrade_contentview_name: upgrade_content_view <br />
    rhel9_contentview_name: post_upgrade_rhel9_content_view <br />
    satellite_organization: satellite_organization <br />
-   satellite_server: satellite_url> <br />
+   satellite_server: satellite_url <br />
    satellite_username: satellite_username <br />
    satellite_password: satellite_password <br /><br />
  Upgrade process is split into stages. Execution of each stage is controled by variable defined in default/main.yml. <br />
