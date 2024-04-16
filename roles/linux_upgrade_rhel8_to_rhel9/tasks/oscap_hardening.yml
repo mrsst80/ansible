@@ -1,0 +1,45 @@
+---
+# tasks file for linux_upgrade_rhel8_to_rhel9
+- name: apply CIS hardening
+  block:
+  - name: install oscap
+    dnf:
+      name: "{{ item }}"
+      state: latest
+    loop:
+    - openscap-scanner
+    - scap-security-guide
+  
+  - name: copy policy file
+    copy:
+      src: ssg-rhel9-ds-tailored_v1_combined.xml
+      dest: /home/autoadm/ssg-rhel9-ds-tailored_v1_combined.xml
+
+  - name: run the hardening on RHEL8
+    command: '/usr/bin/oscap xccdf eval --remediate --profile xccdf_org.ssgproject.content_profile_cis_canadalifeeurope --results scan-xccdf-cis-rhel9_canadalife_tailored_results.xml /home/autoadm/ssg-rhel9-ds-tailored_v1_combined.xml' 
+    args:
+      chdir: /home/autoadm
+    register: oscap_result
+    ignore_errors: yes
+    async: 14400
+    poll: 30
+
+  - debug: 
+      var=oscap_result
+
+  - name: generate report
+    command: '/usr/bin/oscap xccdf generate report scan-xccdf-cis-rhel9_canadalife_tailored_results.xml > /home/autoadm/scan-xccdf-cis-rhel9_canadalife_tailored_results.html'
+    args:
+      chdir: /home/autoadm
+    ignore_errors: yes
+    #when: oscap_results.changed
+
+  - name: update crypto policies
+    command: '/usr/bin/update-crypto-policies --set DEFAULT'
+    
+  - name: reboot the server
+    reboot:
+      reboot_timeout: 1800
+  rescue:
+    - debug:
+        msg: "!!!CIS security hardening failed!!!"

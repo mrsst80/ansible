@@ -1,0 +1,44 @@
+---
+# tasks file for windows_build-gwle
+- name: Abort the Role if the target host is not RHEL8
+  fail:
+    msg: "Target system is not RHEL8"
+  when: 
+    - ansible_facts['os_family'] != 'RedHat'
+    - ansible_facts['distribution_major_version'] != 8
+
+- name: 1 Install leapp-upgrade package
+  include_tasks: leapp_install.yml
+  when: leapp_install
+
+- name: 2 Change to upgrade content view on the satellite
+  include_tasks: upgrade_content_view.yml
+  when: upgrade_content_view
+
+- name: 4 unarchive leapp-data to /etc/leapp/files
+  include_tasks: leapp_data.yml
+  when: leapp_data
+
+- name: 5 leave installed only one kernel version
+  include_tasks: kernel_versions.yml
+  when: kernel_versions
+
+- name: 6 leapp preupgrade
+  include_tasks: leapp_preupgrade.yml
+  when: leapp_preupgrade
+
+- name: 7 leapp upgrade
+  include_tasks: leapp_upgrade.yml
+  when: leapp_upgrade
+
+- name: 8 leapp postupgrade
+  include_tasks: leapp_postupgrade.yml
+  when: leapp_postupgrade
+
+- name: 9 oscap hardening
+  include_tasks: oscap_hardening.yml
+  when: oscap_hardening
+
+- name: 10 postupgrade cleanup
+  include_tasks: postupgrade_cleanup.yml
+  when: postupgrade_cleanup

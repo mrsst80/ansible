@@ -1,0 +1,26 @@
+---
+# tasks file for linux_upgrade_rhel8_to_rhel9
+- name: Run leapp upgrade
+  block:
+  - name: leapp upgrade --target 9.3
+    command: "/usr/bin/leapp upgrade --target 9.3"
+    register: leapp_upgrade_result
+    async: 20000
+    poll: 30
+
+  - name: print leapp_upgrade result
+    debug: 
+      var=leapp_upgrade_result
+
+  - name: create /.autorelabel
+    file:
+      dest: /.autorelabel
+      state: touch
+
+  - name: reboot 
+    reboot:
+      reboot_timeout: 20000
+
+  #rescue:
+  #  - debug:
+  #      msg: "!!!leap upgrade failed!!!"

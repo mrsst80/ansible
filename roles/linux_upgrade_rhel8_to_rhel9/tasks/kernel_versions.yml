@@ -1,0 +1,37 @@
+---
+# tasks file for linux_upgrade_rhel8_to_rhel9
+- name:  leave only one kernel version installed
+  block:
+  - name: gather installed packages fact
+    package_facts:
+      manager: auto
+
+  - name: print kernel packages
+    debug:
+      msg: "{{ item.name }}-{{ item.version}}-{{ item.release }}.{{ item.arch }}"
+    loop: "{{ ansible_facts.packages.kernel | json_query('[*]') | flatten }}"
+    when: item.version + '-' + item.release + '.' + item.arch != ansible_facts['kernel']
+
+  - name: print kernel-devel packages
+    debug:
+      msg: "{{ item.version}}-{{ item.release }}.{{ item.arch }}"
+    loop: "{{ ansible_facts.packages['kernel-devel'] | json_query('[*]') | flatten }}"
+    when: item.version + '-' + item.release + '.' + item.arch != ansible_facts['kernel']
+
+  - name: remove kernel versions not in use
+    yum:
+      name: "{{ item.name }}-{{ item.version}}-{{ item.release }}.{{ item.arch }}"
+      state: removed
+    loop: "{{ ansible_facts.packages.kernel | json_query('[*]') | flatten }}"
+    when: item.version + '-' + item.release + '.' + item.arch != ansible_facts['kernel']
+  
+  - name: remove kernel-devel versions not in use
+    yum:
+      name: "{{ item.name }}-{{ item.version}}-{{ item.release }}.{{ item.arch }}"
+      state: removed
+    loop: "{{ ansible_facts.packages['kernel-devel'] | json_query('[*]') | flatten }}"
+    when: item.version + '-' + item.release + '.' + item.arch != ansible_facts['kernel']
+
+  rescue:
+    - debug:
+        msg: "!!!Remove kernel versions failed!!!"

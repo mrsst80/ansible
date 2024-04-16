@@ -1,0 +1,19 @@
+---
+# defaults file for linux_upgrade_rhel8_to_rhel9
+leapp_install: true
+leapp_data: false
+kernel_versions: true
+upgrade_content_view: true
+leapp_preupgrade: true
+leapp_upgrade: true
+leapp_postupgrade: true
+oscap_hardening: false
+postupgrade_cleanup: true
+print_debug: true
+
+upgrade_contentview_name: <upgrade content view>
+rhel9_contentview_name: <post upgrade rhel9 content view>
+satellite_organization: <satellite organization>
+satellite_server: <satellite url>
+satellite_username: <satellite username>
+satellite_password: <satellite password>

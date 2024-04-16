@@ -1,0 +1,12 @@
+---
+# tasks file for linux_upgrade_rhel8_to_rhel9
+- name: Unarchive leapp-data
+  block:
+  - name: Unarchive leapp-upgrade
+    unarchive:
+      src: leapp-data-22.tar.gz
+      dest: /etc/leapp/files/
+  
+  rescue:
+    - debug:
+        msg: "!!! Unarchive of leapp-data failed !!!"

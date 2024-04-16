@@ -1,0 +1,25 @@
+---
+- name: change to upgrade content view of the host on the satellite
+  block:
+  - name: Update content view of a host
+    redhat.satellite.host:
+      username: "{{ satellite_username }}"
+      password: "{{ satellite_password }}"
+      server_url: "https://{{ satellite_server }}"
+      name: "{{ ansible_fqdn }}"
+      organization: "{{ satellite_organization }}"
+      content_view: "{{ upgrade_contentview_name }}"
+    register: upgrade_contentview_result
+    delegate_to: localhost
+
+  - name: print result
+    debug: 
+      var=upgrade_contentview_result
+
+  - name: refresh with subscription-manager 
+    command: "/usr/bin/subscription-manager refresh" 
+    when: upgrade_contentview_result.changed
+
+  rescue:
+    - debug:
+        msg: "!!!Change content view of {{ ansible_fqdn }} to {{ upgrade_contentview_name }} failed!!!"

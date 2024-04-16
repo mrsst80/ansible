@@ -1,0 +1,7 @@
+collections:
+  #- name: redhat.satellite
+  #  version: ">=4.0.0"
+  #  source: git+https://github.com/RedHatSatellite/satellite-ansible-collection.git
+  - name: https://github.com/RedHatSatellite/satellite-ansible-collection.git
+    type: git
+    version: master

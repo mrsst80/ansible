@@ -1,0 +1,13 @@
+---
+# tasks file for linux_upgrade_rhel8_to_rhel9
+- name: prepare and install leapp upgrade 
+  block:
+  - name: install leapp-upgrade
+    yum:
+      name: leapp-upgrade
+      state: latest
+  
+  rescue:
+    - debug:
+        msg: "!!!Installation of leapp-upgrade failed!!!"
+

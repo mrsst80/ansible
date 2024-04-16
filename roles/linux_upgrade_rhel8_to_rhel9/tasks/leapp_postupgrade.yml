@@ -1,0 +1,52 @@
+---
+# tasks file for linux_upgrade_rhel8_to_rhel9
+- name: change to upgrade content view of the host on the satellite
+  block:
+  - name: Update content view of the host to its new permanent RHEL9
+    redhat.satellite.host:
+      username: "{{ satellite_username }}"
+      password: "{{ satellite_password }}"
+      server_url: "https://{{ satellite_server }}"
+      name: "{{ ansible_fqdn }}"
+      organization: "{{ satellite_organization }}"
+      content_view: "{{ rhel9_contentview_name }}"
+    register: upgrade_contentview_rhel9_result
+    delegate_to: localhost
+ 
+
+  #- name: change default python
+  #  command: "/usr/sbin/alternatives --set python /usr/bin/python3"
+  #  vars:
+  #    ansible_python_interpreter: /usr/bin/python3
+
+  - name: print result
+    debug: 
+      var=upgrade_contentview_rhel9_result
+
+  - name: refresh with subscription-manager 
+    command: "/usr/bin/subscription-manager refresh" 
+    when: upgrade_contentview_rhel9_result.changed
+
+  - name: refresh with subscription-manager 
+    command: "/usr/bin/subscription-manager release --unset" 
+    when: upgrade_contentview_rhel9_result.changed
+
+  - name: clean dnf cache
+    shell: dnf clean all
+
+  - name: update RHEL9 to latest version
+    dnf:
+      name: '*'
+      state: latest
+    async: 5000
+    poll: 30
+    register: update_result
+
+  - name: reboot after update
+    reboot:
+      reboot_timeout: 3600
+    when: update_result.changed
+
+  rescue:
+    - debug:
+        msg: "!!!Change content view of {{ ansible_fqdn }} to {{ rhel9_contentview_name }} failed!!!"
