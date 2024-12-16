@@ -1,0 +1,1 @@
+<LogonRequest schemaVersion="V1_0" xmlns="http://www.ibm.com/xmlns/systems/power/firmware/web/mc/2012_10/" xmlns:mc="http://www.ibm.com/xmlns/systems/power/firmware/web/mc/2012_10/"><UserID>{{ hmc_username }}</UserID><Password>{{ hmc_password }}</Password></LogonRequest>

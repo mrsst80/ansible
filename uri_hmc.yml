@@ -1,0 +1,41 @@
+---
+- name: HMC API
+  hosts: localhost
+  become: true
+  gather_facts: false
+  vars:
+    hmc_hostname: hmchostname
+    hmc_username: user
+    hmc_password: pw
+
+  tasks:
+  - debug:
+      msg: "{{ lookup('template','hmc_login.xml') }}"
+
+  - name: query hmc
+    ansible.builtin.uri:
+      url: https://{{ hmchostname }}/rest/api/web/Logon
+      method: PUT
+      headers: 
+        Content-Type: "application/vnd.ibm.powervm.web+xml; type=LogonRequest" 
+      validate_certs: false
+      force_basic_auth: true
+      body: "{{ lookup('template','hmc_login.xml') }}"
+    register: login
+
+  - debug:
+      var=login
+
+  - name: dump partitions list from hmc
+    ansible.builtin.uri:
+      url: https://{{ hmchostname }}/rest/api/uom/LogicalPartition/quick/All
+      method: GET
+      return_content: true
+      headers:
+        Cookie: "{{ login.cookies_string }}"
+      validate_certs: false
+    register: servers
+
+  - debug: 
+      var=servers.json
+
