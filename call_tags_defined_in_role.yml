@@ -1,0 +1,35 @@
+# Example how ot call tags defined in a role. 
+# We use include_role module and list all defined tags in the role. 
+# Then specify the tags we want to be ran with --tags option of ansible-playbook
+#
+#
+---
+- name: Setup devops agent
+  hosts: "{{ target_hosts | default('localhost') }}"
+  become: true
+  gather_facts: true
+  vars:
+    pvs_rhel8: '/dev/sdb'
+
+  tasks:
+    - name: include role ( using include because of the tags )
+      include_role:
+        name: ms_devops_setup
+      tags:
+        - rhel8_setup
+        - rhel9_setup
+        - enable_repos
+        - yum_install_rhel9
+        - create_lv
+        - create_fs
+        - fs_mount
+        - fs_setup
+        - setup_docker
+        - set_bashrc
+        - libcurl
+        - default_java
+        - twistcli
+        - azure_functions
+        - ssl_certs_install
+        - az_modules
+        - setup_terraform
