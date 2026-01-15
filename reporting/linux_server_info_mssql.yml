@@ -1,0 +1,150 @@
+---
+- name: Get Linux servers information from Satellite and server facts and add it to MSSQL database
+  hosts: "{{ target_hosts | default('localhost') }}"
+  become: true
+  gather_facts: true
+  vars:
+    management_server: <HOSTNAME_WHERE_GET_PASSWD_COMMAND_IS_RUNNING>
+    datetime_localhost: "{{ now(utc=true,fmt='%Y-%m-%d %H:%M:%S') }}"
+    dbname: <DB_NAME>
+    table_name: <TABLE_NAME>
+    satellite_hostname: <SATELITE_SERVER_HOSTNAMH>
+    sql_server: <SQL_SERVER_HOSTNAME>
+    print_debug: false
+    db_username: '<DB_USERNAME>'
+    db_password: 'unset'
+    lobs_json: "{{ lookup('file', 'LOBs.json') | from_json }}"
+    ilg_json: "{{ lookup('file', 'ILG_TAG.json') | from_json }}"
+
+  tasks:
+    - name: Obtain password of db username
+      block:
+        - name: 
+          command: '<COMMAND_TO_RETRIVE_DB_PASSWORD>'
+          register: db_password_result
+          delegate_to: "{{ management_server }}"
+          tags: [ always ]
+    
+        - set_fact:
+            db_password: "{{ db_password_result.stdout }}"
+    
+        - debug:
+            var=db_password
+          when: print_debug
+      tags: [ always ]
+      run_once: true
+
+    - name: "Gather info for all linux hosts in Irish_Life organization"
+      theforeman.foreman.host_info:
+      #redhat.satellite.host_info:
+        username:  "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "https://{{ satellite_hostname }}"
+      register: hosts
+      run_once: true
+      delegate_to: "{{ satellite_hostname }}"
+      tags: [ always ]
+
+    - debug:
+        msg: >
+          INSERT INTO {{ table_name }}
+             (HostName, FQDN, LOB, OperatingSystem, Domain, Manufacturer, Model, IsVM, NumCpus, Memory, PatchingEnvironment, MissingUpdates, LastPatchScanTime, IPAddress, FreeSpace, datetime_of_report, Active, ILG_TAG)
+             VALUES
+              ('{{ item['name'].split('.')[0] }}',
+              '{{ item['name'] }}',
+              '{{ lobs_json['CanadaLifeGroupCustomers'][item['name'][6:8] | upper | replace('DS','AA') ]['abbreviation'] }}',
+              '{{ item['operatingsystem_name'] }}',
+              '{{ (item['name'].split('.'))[1:] | join('.') }}',
+              '{{ hostvars[item.name]['ansible_system_vendor'] | default('not_found') }}',
+              '{{ item['model_name'] }}',
+              '{% if 'Virtual' in item['model_name'] %}1{% else %}0{% endif %}',
+              '{% if 'Virtual' in item['model_name'] %}{{ hostvars[item.name]['ansible_processor_vcpus'] }}{% else %}{{ item['reported_data']['cores'] }}{% endif %}',
+              '{{ hostvars[item.name]['ansible_memtotal_mb'] | default('no_memory_found') }}',
+              '{% if item['content_facet_attributes']['lifecycle_environment']['name'] == 'Prod' %}PRODUCTION{% elif item['content_facet_attributes']['lifecycle_environment']['name'] == 'Library'%}LIBRARY{% else %}NON-PRODUCTION{% endif %}',
+              '{{ item['content_facet_attributes']['errata_counts']['total'] }}',
+              '{% if item['last_report'] is none %}1900-01-01{% else %}{{ item['last_report'] | replace(' UTC','') }}{% endif %}',
+              '{{ hostvars[item.name]['ansible_default_ipv4']['address'] | default(item['ip']) }}',
+              '{% if hostvars[item.name]['ansible_mounts'] is defined %}{{ (hostvars[item.name]['ansible_mounts'][0]['block_available']*hostvars[item.name]['ansible_mounts'][0]['block_size']/1024/1024)|int|abs }}{% else %}0{% endif %}',
+              '{{ datetime_localhost }}',
+              '{% if hostvars[item.name]['ansible_facts'] == {} %}0{% else %}1{% endif %}',
+              '{% if item['name'].split('.')[0] | lower in ilg_json['secondTag'] %}{{ ilg_json['secondTag'][(item['name'].split('.')[0] | lower)] }}{% else %}0{% endif %}'
+              );
+      loop: "{{ hosts['hosts'] }}"
+      loop_control:
+        index_var: list_index
+      ignore_errors: true
+      run_once: true
+      delegate_to: localhost
+      tags: [ never, print_sql_query ]
+
+    - name: Delete all the old data
+      gwle_mssql_query:
+        dbname: "{{ dbname }}"
+        autocommit: true
+        query_type: delete
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        login_host: "{{ sql_server }}"
+        sql_query: "delete from Linux_EUR;"
+      run_once: true
+      delegate_to: "{{ management_server }}"
+      tags: [ sql_delete, never ]
+      ignore_errors: true
+    
+    - name: select query from mssql
+      block: 
+        - gwle_mssql_query:
+            dbname: "{{ dbname }}"
+            autocommit: true
+            query_type: delete
+            login_user: "{{ db_username }}"
+            login_password: "{{ db_password }}"
+            login_host: "{{ sql_server }}"
+            sql_query: "select * from Linux_EUR;"
+          delegate_to: "{{ management_server }}"
+          register: select_output
+          ignore_errors: true
+
+        - debug:
+            var: select_output
+          when: print_debug
+      tags: [ sql_select, never ]
+      run_once: true
+
+    - name: Insert data into the database
+      gwle_mssql_query:
+        dbname: "{{ dbname }}"
+        autocommit: true
+        query_type: insert
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        login_host: "{{ sql_server }}"
+        sql_query: >
+          INSERT INTO {{ table_name }}
+             (HostName, FQDN, LOB, OperatingSystem, Domain, Manufacturer, Model, IsVM, NumCpus, Memory, PatchingEnvironment, MissingUpdates, LastPatchScanTime, IPAddress, FreeSpace, datetime_of_report, Active, ILG_TAG)
+             VALUES
+              ('{{ item['name'].split('.')[0] }}',
+              '{{ item['name'] }}',
+              '{{ lobs_json['CanadaLifeGroupCustomers'][item['name'][6:8] | upper | replace('DS','AA') ]['abbreviation'] }}',
+              '{{ item['operatingsystem_name'] }}',
+              '{{ (item['name'].split('.'))[1:] | join('.') }}',
+              '{{ hostvars[item.name]['ansible_system_vendor'] | default('not_found') }}',
+              '{{ item['model_name'] }}',
+              '{% if 'Virtual' in item['model_name'] %}1{% else %}0{% endif %}',
+              '{% if 'Virtual' in item['model_name'] and hostvars[item.name]['ansible_processor_vcpus'] is defined %}{{ hostvars[item.name]['ansible_processor_vcpus'] }}{% else %}{{ item['reported_data']['cores'] }}{% endif %}',
+              '{{ hostvars[item.name]['ansible_memtotal_mb'] | default('no_memory_found') }}',
+              '{% if item['content_facet_attributes']['lifecycle_environment']['name'] == 'Prod' %}PRODUCTION{% elif item['content_facet_attributes']['lifecycle_environment']['name'] == 'Library'%}LIBRARY{% else %}NON-PRODUCTION{% endif %}',
+              '{{ item['content_facet_attributes']['errata_counts']['total'] }}',
+              '{% if item['last_report'] is none %}1900-01-01{% else %}{{ item['last_report'] | replace(' UTC','') }}{% endif %}',
+              '{{ hostvars[item.name]['ansible_default_ipv4']['address'] | default(item['ip']) }}',
+              '{% if hostvars[item.name]['ansible_mounts'] is defined %}{{ (hostvars[item.name]['ansible_mounts'][0]['block_available']*hostvars[item.name]['ansible_mounts'][0]['block_size']/1024/1024)|int|abs }}{% else %}0{% endif %}',
+              '{{ datetime_localhost }}',
+              '{% if hostvars[item.name]['ansible_facts'] == {} %}0{% else %}1{% endif %}',
+              '{% if item['name'].split('.')[0] | lower in ilg_json['secondTag'] %}{{ ilg_json['secondTag'][(item['name'].split('.')[0] | lower)] }}{% else %}0{% endif %}'
+              );
+      loop: "{{ hosts['hosts'] }}"
+      ignore_errors: true
+      run_once: true
+      delegate_to: "{{ management_server }}"
+      ignore_errors: true
+      tags: [ sql_insert, never ]

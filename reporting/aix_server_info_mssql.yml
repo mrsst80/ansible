@@ -1,0 +1,341 @@
+---
+- name: Get AIX and VIO servers information from HMC and add it to MSSQL database
+  hosts: "{{ target_hosts | default('localhost') }}"
+  become: true
+  gather_facts: true
+  vars:
+    management_server: lnxprdaa3122
+    datetime_localhost: "{{ now(utc=true,fmt='%Y-%m-%d %H:%M:%S') }}"
+    dbname: Nonwin_EUR
+    table_name: AIX_EUR
+    satellite_hostname: satellite_hostname_changeme
+    sql_server: sql_server_hostname
+    print_debug: false
+    db_username: 'username'
+    db_password: 'password'
+    lobs_json: "{{ lookup('file', 'LOBs.json') | from_json }}"
+    ilg_json: "{{ lookup('file', 'ILG_TAG.json') | from_json }}"
+    hmc_hostname: ilhmc03.europa.internal
+    hmc_username: hscroot
+    hmc_password: 'abcdef123'
+    os_complient_versions:
+      - "VIOS 3.1.4.41 "
+      - "AIX 6.1 6100-09-12-1846"
+      - "AIX 7.1 7100-05-12-2320"
+      - "AIX 7.2 7200-05-08-2420"
+      - "AIX 7.3 7300-02-02-2420"
+      - "IBM i Licensed Internal Code 7.4.0 48 10"
+
+  tasks:
+    - name: Obtain password of db username
+      block:
+        - name:
+          command: '!!!GET PASSWORD COMMAND!!!'
+          register: db_password_result
+          delegate_to: "{{ management_server }}"
+          tags: [ always ]
+
+        - set_fact:
+            db_password: "{{ db_password_result.stdout }}"
+
+        - debug:
+            var=db_password
+          when: print_debug
+      tags: [ always ]
+      run_once: true
+
+    - name: Gather info for all IBM Power partitions listed on the HMC
+      block:
+        - name: Login to HMC {{ hmc_hostname }}
+          ansible.builtin.uri:
+            url: https://{{ hmc_hostname }}/rest/api/web/Logon
+            method: PUT
+            headers:
+              Content-Type: "application/vnd.ibm.powervm.web+xml; type=LogonRequest"
+            validate_certs: false
+            force_basic_auth: true
+            body: "{{ lookup('template','hmc_login.xml') }}"
+          register: loginhmc
+
+        - debug:
+            var=loginhmc
+          when: print_debug
+
+        - name: get token
+          ansible.builtin.uri:
+            url: https://{{ hmc_hostname }}/rest/api/web/Logon
+            method: GET
+            return_content: true
+            headers:
+              Cookie: "{{ loginhmc.cookies_string }}"
+            validate_certs: false
+          register: token
+
+        - debug:
+            msg: "{{ token['content'] }}"
+          when: print_debug
+
+        - debug:
+            msg: "{{ token['content'].split('>')[6].split('<')[0] }}"
+          when: print_debug
+
+        - name: get partitions list from hmc
+          ansible.builtin.uri:
+            url: https://{{ hmc_hostname }}/rest/api/uom/LogicalPartition/quick/All
+            method: GET
+            return_content: true
+            headers:
+              Cookie: "{{ loginhmc.cookies_string }}"
+            validate_certs: false
+          register: lpars
+
+        - name: get vios list from hmc
+          ansible.builtin.uri:
+            url: https://{{ hmc_hostname }}/rest/api/uom/VirtualIOServer/quick/All
+            method: GET
+            return_content: true
+            headers:
+              Cookie: "{{ loginhmc.cookies_string }}"
+            validate_certs: false
+          register: vios
+
+      tags: [ always ]
+      run_once: true
+
+    - debug:
+        var=vios
+      tags: [ never, print_vios ]
+
+    - debug:
+        var=lpars
+      tags: [ never, print_lpars ]
+
+    - set_fact:
+        lparss: "{{ lpars.json}}"
+
+    - name: get additional information from the lpars via NIM
+      ibm.power_aix.nim:
+        action: script
+        script: server_report_info
+        asynchronous: false
+        targets: "{{ item['PartitionName'].split('-')[0] | lower }}"
+      register: results_nim
+      delegate_to: clirenim1
+      loop: "{{ lpars.json }}"
+      loop_control:
+        index_var: i
+      when:
+         - item.PartitionName is not search("DR")
+         #- item.PartitionName is not search("OLD")
+         - item.PartitionState == "running"
+         - item.PartitionState != "OS400"
+         #- i < 5
+      ignore_errors: true
+      tags: [ never ]
+
+    - debug:
+        var=item['stdout_lines']
+      loop: "{{ results_nim['results'] }}"
+      when: results_nim['changed'] == "true"
+      tags: [ never ]
+
+    - debug:
+        msg: "{{ item['PartitionName'].split('-')[0] | lower }}"
+      loop: "{{ lpars.json }}"
+      when:
+        - "{{ 'DR' not in item.PartitionName }}"
+        #- "{{ 'OLD' not in item.PartitionName }}"
+        - "{{ item.PartitionState == 'running' }}"
+        - "{{ item.PartitionType != 'OS400' }}"
+      tags: [ never ]
+
+    - name: get additional information from the lpars via NIM
+      ibm.power_aix.nim:
+        action: script
+        script: server_report_info
+        asynchronous: false
+        targets: "{{ item }}"
+      register: results_nim
+      delegate_to: clirenim1
+      loop: "{{ hosts2 }}"
+      tags: [ never ]
+
+    - debug:
+        msg: >
+          INSERT INTO {{ table_name }}
+             (HostName, FQDN, LOB, OperatingSystemType, OperatingSystemVersion, PhysicalSystem, Domain, Manufacturer, Model, IsVM, NumCpus, Memory, PatchingEnvironment, MissingUpdates, LastPatchScanTime, IPAddress, FreeSpace, datetime_of_report, Active, ILG_TAG)
+             VALUES
+              ('{{ item['PartitionName'].split('-')[0] | default('name_not_found') }}',
+              '{{ item['Description'] | default('fqdn_not_found') }}',
+              '{{ item['PartitionName'].split('-')[2] | default('lob_not_found') }}',
+              '{{ item['OperatingSystemType'] }}',
+              '{{ item['OperatingSystemVersion'] }}',
+              '{{ item['SystemName'] }}',
+              '{% if item['Description'] %}{{ item['Description'].split('.')[1:] | join('.') }}{% else %}domain_not_found{% endif %}',
+              'IBM',
+              '{{ item['PartitionType'] }}',
+              '1',
+              '{{ item['CurrentProcessors'] }}',
+              '{{ item['CurrentMemory'] }}',
+              '{% if item['PartitionName'].split('-')[1] == 'PROD' %}PRODUCTION{% else %}NON-PRODUCTION{% endif %}',
+              '{% if item['OperatingSystemVersion'] in os_complient_versions %}1{% else %}0{% endif %}',
+              '{{ datetime_localhost }}',
+              '{{ item['ResourceMonitoringIPAddress'] }}',
+              '0',
+              '{{ datetime_localhost }}',
+              '{% if item['PartitionState'] == "running" %}1{% else %}0{% endif %}',
+              '{% if item['PartitionName'].split('-')[0] | lower in ilg_json['secondTag'] %}{{ ilg_json['secondTag'][(item['PartitionName'].split('-')[0] | lower)] }}{% else %}0{% endif %}'
+              );
+      loop: "{{ lpars.json }}"
+      loop_control:
+        index_var: list_index
+      ignore_errors: true
+      when:
+        - item.PartitionName is not search("DR")
+        #- item.PartitionName is not search("OLD")
+        - item.PartitionState == "running"
+      run_once: true
+      delegate_to: localhost
+      tags: [ never, print_sql_query ]
+
+    - name: Delete all the old data
+      gwle_mssql_query:
+        dbname: "{{ dbname }}"
+        autocommit: true
+        query_type: delete
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        login_host: "{{ sql_server }}"
+        sql_query: "delete from {{ table_name }};"
+      run_once: true
+      delegate_to: "{{ management_server }}"
+      tags: [ sql_delete, never ]
+      ignore_errors: true
+
+    - name: select query from mssql
+      block:
+        - gwle_mssql_query:
+            dbname: "{{ dbname }}"
+            autocommit: true
+            query_type: delete
+            login_user: "{{ db_username }}"
+            login_password: "{{ db_password }}"
+            login_host: "{{ sql_server }}"
+            sql_query: "select * from {{ table_name }};"
+          delegate_to: "{{ management_server }}"
+          register: select_output
+          ignore_errors: true
+
+        - debug:
+            var: select_output
+          when: print_debug
+
+      tags: [ sql_select, never ]
+      run_once: true
+
+    - name: Insert lpars data into the database
+      gwle_mssql_query:
+        dbname: "{{ dbname }}"
+        autocommit: true
+        query_type: insert
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        login_host: "{{ sql_server }}"
+        sql_query: >
+          INSERT INTO {{ table_name }}
+             (HostName, FQDN, LOB, OperatingSystemType, OperatingSystemVersion, PhysicalSystem, Domain, Manufacturer, Model, IsVM, NumCpus, Memory, PatchingEnvironment, MissingUpdates, LastPatchScanTime, IPAddress, FreeSpace, datetime_of_report, Active, ILG_TAG)
+             VALUES
+              ('{{ item['PartitionName'].split('-')[0] | default('name_not_found') }}',
+              '{{ item['Description'] | default('fqdn_not_found') }}',
+              '{{ item['PartitionName'].split('-')[2] | default('lob_not_found') }}',
+              '{{ item['OperatingSystemType'] }}',
+              '{{ item['OperatingSystemVersion'] }}',
+              '{{ item['SystemName'] }}',
+              '{% if item['Description'] %}{{ item['Description'].split('.')[1:] | join('.') }}{% else %}domain_not_found{% endif %}',
+              'IBM',
+              '{{ item['PartitionType'] }}',
+              '1',
+              '{{ item['CurrentProcessors'] }}',
+              '{{ item['CurrentMemory'] }}',
+              '{% if item['PartitionName'].split('-')[1] == 'PROD' %}PRODUCTION{% else %}NON-PRODUCTION{% endif %}',
+              '{% if item['OperatingSystemVersion'] in os_complient_versions %}1{% else %}0{% endif %}',
+              '{{ datetime_localhost }}',
+              '{{ item['ResourceMonitoringIPAddress'] }}',
+              '0',
+              '{{ datetime_localhost }}',
+              '{% if item['PartitionState'] == "running" %}1{% else %}0{% endif %}',
+              '{% if item['PartitionName'].split('-')[0] | lower in ilg_json['secondTag'] %}{{ ilg_json['secondTag'][(item['PartitionName'].split('-')[0] | lower)] }}{% else %}0{% endif %}'
+              );
+      loop: "{{ lpars.json }}"
+      when:
+        - item.PartitionName is not search("DR")
+        #- item.PartitionName is not search("OLD")
+        - item.PartitionState == "running"
+      ignore_errors: true
+      run_once: true
+      delegate_to: "{{ management_server }}"
+      tags: [ sql_insert_lpars, never ]
+
+    - name: Insert VIOS data into the database
+      gwle_mssql_query:
+        dbname: "{{ dbname }}"
+        autocommit: true
+        query_type: insert
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        login_host: "{{ sql_server }}"
+        sql_query: >
+          INSERT INTO {{ table_name }}
+             (HostName, FQDN, LOB, OperatingSystemType, OperatingSystemVersion, PhysicalSystem, Domain, Manufacturer, Model, IsVM, NumCpus, Memory, PatchingEnvironment, MissingUpdates, LastPatchScanTime, IPAddress, FreeSpace, datetime_of_report, Active, ILG_TAG)
+             VALUES
+              ('{{ item['PartitionName'].split('-')[0] | default('name_not_found') }}',
+              '{{ item['Description'] | default('fqdn_not_found') }}',
+              '{{ item['PartitionName'].split('-')[2] | default('lob_not_found') }}',
+              '{{ item['OperatingSystemType'] }}',
+              '{{ item['OperatingSystemVersion'] }}',
+              '{{ item['SystemName'] }}',
+              '{% if item['Description'] %}{{ item['Description'].split('.')[1:] | join('.') }}{% else %}domain_not_found{% endif %}',
+              'IBM',
+              '{{ item['PartitionType'] }}',
+              '1',
+              '{{ item['CurrentProcessors'] }}',
+              '{{ item['CurrentMemory'] }}',
+              '{% if item['PartitionName'].split('-')[1] == 'PROD' %}PRODUCTION{% else %}NON-PRODUCTION{% endif %}',
+              '{% if item['OperatingSystemVersion'] in os_complient_versions %}1{% else %}0{% endif %}',
+              '{{ datetime_localhost }}',
+              '{{ item['ResourceMonitoringIPAddress'] }}',
+              '0',
+              '{{ datetime_localhost }}',
+              '{% if item['PartitionState'] == "running" %}1{% else %}0{% endif %}',
+              '0'
+              );
+      loop: "{{ vios.json }}"
+      when:
+        - item.PartitionName is not search("DR")
+        #- item.PartitionName is not search("OLD")
+        - item.PartitionState == "running"
+      ignore_errors: true
+      run_once: true
+      delegate_to: "{{ management_server }}"
+      tags: [ sql_insert_vios, never ]
+
+    - name: Logout HMC {{ hmc_hostname }}
+      ansible.builtin.uri:
+        url: https://{{ hmc_hostname }}/rest/api/web/Logon
+        method: DELETE
+        headers:
+          X-API-Session: "{{ token['content'].split('>')[6].split('<')[0] }}"
+        validate_certs: false
+      register: logouthmc
+      ignore_errors: true
+      failed_when:
+        - logouthmc.status != 0
+        - logouthmc.status != 200
+        - logouthmc.status != 202
+        - logouthmc.status != 204
+      tags: [ always ]
+
+    - debug:
+        var=logouthmc
+      when: print_debug
+      tags: [ always ]

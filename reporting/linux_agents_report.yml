@@ -1,0 +1,565 @@
+---
+- name: Rerport Agents status on Linux servers
+  hosts: "{{ target_hosts | default('localhost') }}"
+  become: true
+  gather_facts: true
+  vars:
+    management_server: management_server
+    datetime_localhost: "{{ now(utc=true,fmt='%Y-%m-%d %H:%M:%S') }}"
+    date_localhost: "{{ now(utc=true,fmt='%Y-%m-%d') }}"
+    dbname: <!!!DB_NAME!!!> 
+    table_name: <!!!SQL_TABLE_NAME!!!>
+    satellite_hostname: <!!!SATELLITE_HOSTNAME!!!>
+    sql_server: <!!!SQL_SERVER_HOSTNAME!!!>
+    print_debug: false
+    print_debug_pkg: false
+    db_username: 'DB_USERNAME'
+    db_password: 'unset'
+    lobs_json: "{{ lookup('file', 'LOBs.json') | from_json }}"
+    json_url_agents: "<FQDN>/config.json"
+
+    xagt_log_file: "/tmp/xagt-{{ date_localhost }}.log"
+    xagt_logs_generate_cmd: '/opt/fireeye/bin/xagt --log-export {{ xagt_log_file }}'
+    xagt_logs_tail_cmd: 'tail -50 {{ xagt_log_file }}'
+    xagt_search_string: 'http_proxy_status.cc:0288: m=Connected successfully'
+
+    nxlog_log_file: "/opt/nxlog/var/log/nxlog/nxlog.log"
+    nxlog_logs_tail_cmd: "tail -50 {{ nxlog_log_file }}"
+    nxlog_search_string: "tcp connection established with"
+
+    rapid7_log_file: "/opt/rapid7/ir_agent/components/insight_agent/common/agent.log"
+    rapid7_logs_tail_cmd: "tail -50 {{ rapid7_log_file }}"
+    rapid7_search_string: "{{ date_localhost }}.*host\\((.*:5508).*status updated to ACTIVE"
+
+  tasks:
+    - name: Obtain password of db username
+      block:
+        - name: query CA agent
+          command: 'COMMAND TO GET PASSWORD'
+          register: db_password_result
+          delegate_to: "{{ management_server }}"
+          tags: [ always ]
+    
+        - set_fact:
+            db_password: "{{ db_password_result.stdout }}"
+    
+        - debug:
+            var=db_password
+          when: print_debug
+      tags: [ always ]
+      run_once: true
+
+    - name: Get agents facts
+      block:
+        - name: Get agents facts
+          uri:
+            url: "{{ json_url_agents }}"
+            method: GET
+            return_content: yes
+          register: agents_url_result
+
+        - set_fact:
+            agents_url: "{{ agents_url_result.json }}"
+        
+        - debug:
+            var=agents_url
+          when: print_debug
+      tags: [ always ]
+      run_once: true
+          
+    - name: gather services and installed packages facts
+      block:
+        - name: gather services facts
+          service_facts:
+
+        - name: gather installed packages facts
+          package_facts:
+        
+        - debug:
+            var=ansible_facts['services']
+          when: print_debug_pkg
+
+        - debug:
+            var=ansible_facts['packages']
+          when: print_debug_pkg
+
+      tags: [ gather_service_packages, always ]
+    
+    - name: get rapid7 version
+      block:
+        - name: get stat of insight_agent
+          stat:
+            path: /opt/rapid7/ir_agent/components/insight_agent/insight_agent
+          register: rapid7_link
+
+        - debug:
+            var=rapid7_link
+          when: print_debug
+
+        - set_fact:
+            rapid7_version: "{% if rapid7_link.stat.exists == false %}not_installed{% else %}{{ rapid7_link.stat.lnk_target | regex_search('\\d{1,}\\.\\d{1,}\\.\\d{1,}\\.\\d{1,}') }}{% endif %}"
+
+        - debug:
+            var=rapid7_version
+          when: print_debug
+      rescue:
+        - set_fact:
+            rapid7_version: "not_found"
+
+        - debug: 
+            msg: "rapid7 version cannot be obtained"
+
+      tags: [ get_rapid7_version, always ]
+
+    - name: check if fireeye is Connected
+      block: 
+      - name: generate fireeye logs
+        command: "{{ xagt_logs_generate_cmd }}"
+        register: xagt_logs_result
+
+      - name: read last 50 lines of fireeye logs
+        command: "{{ xagt_logs_tail_cmd }}"
+        register: xagt_log_content
+
+      - debug:
+          var=xagt_log_content.stdout
+        when: print_debug
+
+      - name: remove the {{ xagt_log_file }}
+        file:
+          path: "{{ xagt_log_file }}"
+          state: absent
+
+      rescue:
+      - set_fact:
+          xagt_log_content:
+            stdout: "no_log_file"
+
+      - debug: 
+          msg: "fireeye log cannot be analyzed"
+
+      when: ansible_facts['services']['xagt.service'] is defined
+      tags: [ check_fireeye_connected, always ]
+
+    - name: set fireeye vaiables
+      block:
+      - name: set default fireeye_data dictionary with all keys valuues equal to 0 (not compliant)
+        set_fact:
+          fireeye_data: >
+            {% set fireeye_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {{ fireeye_tmp }}
+
+      - name: check if fireeye agent is compliant and alter fireeye_data dictionary accordingly      
+        set_fact:
+          fireeye_data: >
+            {% set fireeye_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {% if ansible_facts['services']['xagt.service'] is defined -%}
+              {% if ansible_facts['services']['xagt.service']['status'] == "enabled" -%}
+                {% set _ = fireeye_tmp.update({'enabled': 1}) -%}
+              {% endif -%}
+              {% if ansible_facts['services']['xagt.service']['state'] == "running" -%}
+                {% set _ = fireeye_tmp.update({'running': 1}) -%}
+              {% endif -%}
+              {% if ansible_facts['packages']['xagt'][0]['version'] >= agents_url['FireEye']['LatestVersion'] -%}
+                {% set _ = fireeye_tmp.update({'versionCompliant': 1}) -%}
+              {% endif -%}
+              {% set _ = fireeye_tmp.update({'version': ansible_facts['packages']['xagt'][0]['version'] }) -%}
+              {% if xagt_search_string in xagt_log_content.stdout -%}
+                {% set _ = fireeye_tmp.update({'connected': 1}) -%}
+              {% endif -%}
+              {% if fireeye_tmp['enabled'] == 1 and fireeye_tmp['versionCompliant'] == 1 and fireeye_tmp['connected'] == 1 and fireeye_tmp['running'] == 1 -%}
+                {% set _ = fireeye_tmp.update({'state': 1}) -%}
+              {% endif -%}
+            {% endif -%}
+            {{ fireeye_tmp }}
+        when:     
+        - ansible_facts['services']['xagt.service'] is defined
+        - ansible_facts['packages']['xagt'] is defined
+      tags: [ set_fireeye_data, always ]
+
+    - name: print fireeye_data related variables
+      block:
+      - debug:
+          var=fireeye_data
+
+      - debug:
+          var=ansible_facts['packages']['xagt'][0]['version']
+
+      when: print_debug
+
+    - name: check if nxlog is connected
+      block:
+        - name: read last 50 lines of nxlog logs
+          command: "{{ nxlog_logs_tail_cmd }}"
+          register: nxlog_log_content
+      rescue:
+        - set_fact:
+            nxlog_log_content: 
+              stdout: "no_log_file"
+
+        - debug: 
+            msg: "nxlog connection cannot be verifyed"
+
+      when: ansible_facts['services']['nxlog.service'] is defined
+      tags: [ check_nxlog_connected, always ]
+
+    - name: set nxlog variables
+      block:
+      - name: set default nxlog_data dictionary with all keys valuues equal to 0 (not compliant)
+        set_fact: 
+          nxlog_data: >
+            {% set nxlog_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {{ nxlog_tmp }}
+  
+      - name: check if nxlog agent is compliant and alter nxlog_data dictionary accordingly 
+        set_fact:
+          nxlog_data: >
+            {% set nxlog_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {% if ansible_facts['services']['nxlog.service'] is defined -%}
+              {% if ansible_facts['services']['nxlog.service']['status'] == "enabled" -%}
+                {% set _ = nxlog_tmp.update({'enabled': 1}) -%}
+              {% endif -%}
+              {% if ansible_facts['services']['nxlog.service']['state'] == "running" -%}
+                {% set _ = nxlog_tmp.update({'running': 1}) -%}
+              {% endif -%}
+              {% if ansible_facts['packages']['nxlog'][0]['version'] >= agents_url['NXLog']['LatestVersion'] -%}
+                {% set _ = nxlog_tmp.update({'versionCompliant': 1}) -%}
+              {% endif -%}
+              {% set _ = nxlog_tmp.update({'version': ansible_facts['packages']['nxlog'][0]['version'] }) -%}
+              {% if nxlog_search_string in nxlog_log_content.stdout -%}
+                {% set _ = nxlog_tmp.update({'connected': 1}) -%}
+              {% endif -%}
+              {% if nxlog_tmp['enabled'] == 1 and nxlog_tmp['versionCompliant'] == 1 and nxlog_tmp['connected'] == 1 and nxlog_tmp['running'] == 1 -%}
+                {% set _ = nxlog_tmp.update({'state': 1}) -%}
+              {% endif -%}
+            {% endif -%}
+            {{ nxlog_tmp }}
+        when: 
+        - ansible_facts['services']['nxlog.service'] is defined
+        - ansible_facts['packages']['nxlog'] is defined
+
+      tags: [ set_nxlog_data, always ]
+
+    - name: print nxlog related variables
+      block:
+      - debug:
+          var=nxlog_data
+
+      - debug:
+          var=ansible_facts['packages']['nxlog'][0]['version']
+
+      - debug:
+          var=agents_url['NXLog']['linux_allowed_versions']
+      
+      when: print_debug
+
+    - name: check if rapid7 is connected
+      block:
+        - name: check if rapid7 log file exists
+          stat:
+            path: "{{ rapid7_log_file }}"
+          register: rapid7_log_file_stat
+
+        - name: create empty log file if does not exist in order the rest of the block to work
+          file:
+            path: "{{ rapid7_log_file }}"
+            state: touch
+          when: not rapid7_log_file_stat.stat.exists
+
+        - name: read last 50 lines of rapid7 logs
+          command: "{{ rapid7_logs_tail_cmd }}"
+          register: rapid7_log_content
+
+        - name: set rapid7 server
+          set_fact:
+            rapid7_server_tmp: "{{ rapid7_log_content.stdout | regex_search(rapid7_search_string, '\\1') }}"
+
+        - set_fact:
+            rapid7_server: "{{ rapid7_server_tmp[0] | default('no_rapid7_server_found') }}"
+
+        - name: set environemnt equal to agents_url['Rapid7']['Collectors'] to lower case 
+          set_fact:
+            rapid7_collectors: "{{ agents_url['Rapid7']['Collectors'] | lower }}"
+
+      when: ansible_facts['services']['ir_agent.service'] is defined
+      tags: [ check_rapid7_connected, always ]
+
+    - name: print rapid7 variables
+      block: 
+        - debug:
+            var=rapid7_server
+
+        - debug:
+            var=rapid7_collectors
+      when: print_debug
+
+    # rapid7 version is not checked because AllowedVersions are missing in json file
+    # not checked, to be fixed
+    - name: set rapid7 variables
+      block:
+      - name: set default rapid7_data dictionary with all keys valuues equal to 0 (not compliant)
+        set_fact:
+          rapid7_data: >
+            {% set rapid7_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {{ rapid7_tmp }}
+
+      - name: check if rapid7 agent is compliant and alter rapid7_data dictionary accordingly 
+        set_fact:
+          rapid7_data: >
+            {% set rapid7_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {% if rapid7_version != 'not_installed' -%}
+              {% if ansible_facts['services']['ir_agent.service']['status'] == "enabled" -%}
+                {% set _ = rapid7_tmp.update({'enabled': 1}) -%}
+              {% endif -%}
+              {% if ansible_facts['services']['ir_agent.service']['state'] == "running" -%}
+                {% set _ = rapid7_tmp.update({'running': 1}) -%}
+              {% endif -%}
+              {% if rapid7_version >= agents_url['Rapid7']['linux_latest_version']  -%}
+                {% set _ = rapid7_tmp.update({'versionCompliant': 1}) -%}
+              {% endif -%}
+              {% set _ = rapid7_tmp.update({'version': rapid7_version }) -%}
+              {% if rapid7_server in rapid7_collectors -%}
+                {% set _ = rapid7_tmp.update({'connected': 1}) -%}
+              {% endif -%}
+              {% if rapid7_tmp['enabled'] == 1 and rapid7_tmp['versionCompliant'] == 1 and rapid7_tmp['connected'] == 1 and rapid7_tmp['running'] == 1 -%}
+                {% set _ = rapid7_tmp.update({'state': 1}) -%}
+              {% endif -%}
+            {% endif -%}
+            {{ rapid7_tmp }}
+        when: ansible_facts['services']['ir_agent.service'] is defined
+
+      tags: [ set_rapid7_data, always ]
+
+    - name: print rapid7 variables
+      block:
+      - debug:
+          var=rapid7_data
+      when: print_debug
+    
+    # connection no check. Zabbix is marked as connection just if it is running
+    - name: set zabbix variables
+      block:
+      - name: set default zabbix_data dictionary with all keys values equal to 0 (not compliant)
+        set_fact:
+          zabbix_data: >
+            {% if 'prd' in ansible_facts['fqdn'] -%}
+            {% set zabbix_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {% else -%}
+            {% set zabbix_tmp = {'state': 2, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {% endif -%}
+            {{ zabbix_tmp }}
+
+      - name: set default zabbix_data dictionary with all keys values equal to 0 (not compliant)      
+        set_fact:
+          zabbix_data: >
+            {% set zabbix_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {% if ansible_facts['services']['zabbix-agent.service'] is defined -%}
+              {% if ansible_facts['services']['zabbix-agent.service']['status'] == "enabled" -%}
+                {% set _ = zabbix_tmp.update({'enabled': 1}) -%}
+              {% endif -%}
+              {% if ansible_facts['services']['zabbix-agent.service']['state'] == "running" -%}
+                {% set _ = zabbix_tmp.update({'running': 1}) -%}
+              {% endif -%}
+              {% if ansible_facts['packages']['zabbix-agent'][0]['version'].split('.')[0] == agents_url['Zabbix']['linux_latest_version'].split('.')[0]  -%}
+                {% set _ = zabbix_tmp.update({'versionCompliant': 1}) -%}
+              {% endif -%}
+              {% set _ = zabbix_tmp.update({'version': ansible_facts['packages']['zabbix-agent'][0]['version'] }) -%}
+              {% if ansible_facts['services']['zabbix-agent.service']['state'] == "running" -%}
+                {% set _ = zabbix_tmp.update({'connected': 1}) -%}
+              {% endif -%}
+              {% if zabbix_tmp['enabled'] == 1 and zabbix_tmp['versionCompliant'] == 1 and zabbix_tmp['connected'] == 1 and zabbix_tmp['running'] == 1  -%}
+                {% set _ = zabbix_tmp.update({'state': 1}) -%}
+              {% endif -%}
+            {% endif -%}
+            {{ zabbix_tmp }}
+        when: 
+        - ansible_facts['services']['zabbix-agent.service'] is defined
+        - ansible_facts['packages']['zabbix-agent'] is defined
+      
+      tags: [ set_zabbix_data, always ]
+    
+    - debug:
+        var=zabbix_data
+      when: print_debug
+
+    # connection no check. ds_agent is marked as connection just if it is running
+    - name: set ds_agent variables
+      block:
+      - name: set default ds_data dictionary with all keys valuues equal to 0 (not compliant)
+        set_fact:
+          ds_data: >
+            {% if '172' == ansible_default_ipv4['address'].split('.')[0] or '192' == ansible_default_ipv4['address'].split('.')[0] -%}
+            {% set ds_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {% else -%}
+            {% set ds_tmp = {'state': 2, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {% endif -%}
+            {{ ds_tmp }}
+
+      - name: set default ds_data dictionary with all keys valuues equal to 0 (not compliant)  
+        set_fact:
+          ds_data: >
+            {% set ds_tmp = {'state': 0, 'enabled': 0, 'running': 0, 'version': 0, 'versionCompliant': 0, 'connected': 0} -%}
+            {% if ansible_facts['services']['ds_agent.service'] is defined -%}
+              {% if ansible_facts['services']['ds_agent.service']['status'] == "enabled" -%}
+                {% set _ = ds_tmp.update({'enabled': 1}) -%}
+              {% endif -%}
+              {% if ansible_facts['services']['ds_agent.service']['state'] == "running" -%}
+                {% set _ = ds_tmp.update({'running': 1}) -%}
+              {% endif -%}
+              {% if ansible_facts['packages']['ds_agent'][0]['version'] >= agents_url['DeepSecurity']['linux_latest_version'] -%}
+                {% set _ = ds_tmp.update({'versionCompliant': 1}) -%}
+              {% endif -%}
+              {% set release = ansible_facts['packages']['ds_agent'][0]['release'].split('.') -%}
+              {% set full_version = ansible_facts['packages']['ds_agent'][0]['version'] ~ '.' ~ release[0] -%}
+              {% set _ = ds_tmp.update({'version': full_version }) -%}
+              {% if ansible_facts['services']['ds_agent.service']['state'] == "running" -%}
+                {% set _ = ds_tmp.update({'connected': 1}) -%}
+              {% endif -%}
+              {% if ds_tmp['enabled'] == 1 and ds_tmp['versionCompliant'] == 1 and ds_tmp['connected'] == 1 -%}
+                {% set _ = ds_tmp.update({'state': 1}) -%}
+              {% endif -%}
+            {% endif -%}
+            {{ ds_tmp }}
+        when: 
+        - ansible_facts['services']['ds_agent.service'] is defined
+        - ansible_facts['packages']['ds_agent'] is defined
+      
+      tags: [ set_ds_data, always ]
+
+    - debug:
+        var=ds_data
+      when: print_debug
+
+    - name: Delete all the old data
+      gwle_mssql_query:
+        dbname: "{{ dbname }}"
+        autocommit: true
+        query_type: delete
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        login_host: "{{ sql_server }}"
+        sql_query: "delete from Linux_agents;"
+      run_once: true
+      delegate_to: "{{ management_server }}"
+      tags: [ sql_delete, never ]
+      ignore_errors: true
+
+    - name: print sql query
+      debug:
+        msg: >
+          INSERT INTO {{ table_name }}
+            (datetime_of_report, Hostname, FQDN, fireeyeStatus, fireeyeEnabled, fireeyeRunning, fireeyeVersion, fireeyeVersionCompliant, fireeyeConnected, nxlogStatus, nxlogEnabled, nxlogRunning, nxlogVersion, nxlogVersionCompliant, nxlogConnected, rapid7Status, rapid7Enabled, rapid7Running, rapid7Version, rapid7VersionCompliant, rapid7Connected, zabbixStatus, zabbix_enabled, zabbixRunning, zabbixVersion, zabbixVersionCompliant, zabbixConnected, dsStatus, dsEnabled, dsRunning, dsVersion, dsVersionCompliant, dsConnected)
+           VALUES
+            ('{{ datetime_localhost }}',
+            '{{ item.split('.')[0] }}',
+            '{{ item }}',
+            '{{ hostvars[item]['fireeye_data']['state'] }}', 
+            '{{ hostvars[item]['fireeye_data']['enabled'] }}',
+            '{{ hostvars[item]['fireeye_data']['running'] }}', 
+            '{{ hostvars[item]['fireeye_data']['version'] }}',
+            '{{ hostvars[item]['fireeye_data']['versionCompliant'] }}', 
+            '{{ hostvars[item]['fireeye_data']['connected'] }}', 
+            '{{ hostvars[item]['nxlog_data']['state'] }}',
+            '{{ hostvars[item]['nxlog_data']['enabled'] }}',
+            '{{ hostvars[item]['nxlog_data']['running'] }}',
+            '{{ hostvars[item]['nxlog_data']['version'] }}',
+            '{{ hostvars[item]['nxlog_data']['versionCompliant'] }}',
+            '{{ hostvars[item]['nxlog_data']['connected'] }}',
+            '{{ hostvars[item]['rapid7_data']['state'] }}',
+            '{{ hostvars[item]['rapid7_data']['enabled'] }}',
+            '{{ hostvars[item]['rapid7_data']['running'] }}',
+            '{{ hostvars[item]['rapid7_data']['version'] }}',
+            '{{ hostvars[item]['rapid7_data']['versionCompliant'] }}',
+            '{{ hostvars[item]['rapid7_data']['connected'] }}',
+            '{{ hostvars[item]['zabbix_data']['state'] }}',
+            '{{ hostvars[item]['zabbix_data']['enabled'] }}',
+            '{{ hostvars[item]['zabbix_data']['running'] }}',
+            '{{ hostvars[item]['zabbix_data']['version'] }}',
+            '{{ hostvars[item]['zabbix_data']['versionCompliant'] }}',
+            '{{ hostvars[item]['zabbix_data']['connected'] }}',
+            '{{ hostvars[item]['ds_data']['state'] }}',
+            '{{ hostvars[item]['ds_data']['enabled'] }}',
+            '{{ hostvars[item]['ds_data']['running'] }}',
+            '{{ hostvars[item]['ds_data']['version'] }}',
+            '{{ hostvars[item]['ds_data']['versionCompliant'] }}',
+            '{{ hostvars[item]['ds_data']['connected'] }}'
+            );
+      when: print_debug
+      loop: "{{ ansible_play_hosts_all }}"
+      when: hostvars[item]['ansible_facts']
+      run_once: true
+      delegate_to: localhost
+      tags: [ print_sql_query, never ]
+  
+    - name: Insert data into the database
+      gwle_mssql_query:
+        dbname: "{{ dbname }}"
+        autocommit: true
+        query_type: insert
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        login_host: "{{ sql_server }}"
+        sql_query: >
+          INSERT INTO {{ table_name }}
+            (datetime_of_report, Hostname, FQDN, fireeyeStatus, fireeyeEnabled, fireeyeRunning, fireeyeVersion, fireeyeVersionCompliant, fireeyeConnected, nxlogStatus, nxlogEnabled, nxlogRunning, nxlogVersion, nxlogVersionCompliant, nxlogConnected, rapid7Status, rapid7Enabled, rapid7Running, rapid7Version, rapid7VersionCompliant, rapid7Connected, zabbixStatus, zabbix_enabled, zabbixRunning, zabbixVersion, zabbixVersionCompliant, zabbixConnected, dsStatus, dsEnabled, dsRunning, dsVersion, dsVersionCompliant, dsConnected)
+           VALUES
+            ('{{ datetime_localhost }}',
+            '{{ item.split('.')[0] }}',
+            '{{ item }}',
+            '{{ hostvars[item]['fireeye_data']['state'] }}', 
+            '{{ hostvars[item]['fireeye_data']['enabled'] }}',
+            '{{ hostvars[item]['fireeye_data']['running'] }}', 
+            '{{ hostvars[item]['fireeye_data']['version'] }}',
+            '{{ hostvars[item]['fireeye_data']['versionCompliant'] }}', 
+            '{{ hostvars[item]['fireeye_data']['connected'] }}', 
+            '{{ hostvars[item]['nxlog_data']['state'] }}',
+            '{{ hostvars[item]['nxlog_data']['enabled'] }}',
+            '{{ hostvars[item]['nxlog_data']['running'] }}',
+            '{{ hostvars[item]['nxlog_data']['version'] }}',
+            '{{ hostvars[item]['nxlog_data']['versionCompliant'] }}',
+            '{{ hostvars[item]['nxlog_data']['connected'] }}',
+            '{{ hostvars[item]['rapid7_data']['state'] }}',
+            '{{ hostvars[item]['rapid7_data']['enabled'] }}',
+            '{{ hostvars[item]['rapid7_data']['running'] }}',
+            '{{ hostvars[item]['rapid7_data']['version'] }}',
+            '{{ hostvars[item]['rapid7_data']['versionCompliant'] }}',
+            '{{ hostvars[item]['rapid7_data']['connected'] }}',
+            '{{ hostvars[item]['zabbix_data']['state'] }}',
+            '{{ hostvars[item]['zabbix_data']['enabled'] }}',
+            '{{ hostvars[item]['zabbix_data']['running'] }}',
+            '{{ hostvars[item]['zabbix_data']['version'] }}',
+            '{{ hostvars[item]['zabbix_data']['versionCompliant'] }}',
+            '{{ hostvars[item]['zabbix_data']['connected'] }}',
+            '{{ hostvars[item]['ds_data']['state'] }}',
+            '{{ hostvars[item]['ds_data']['enabled'] }}',
+            '{{ hostvars[item]['ds_data']['running'] }}',
+            '{{ hostvars[item]['ds_data']['version'] }}',
+            '{{ hostvars[item]['ds_data']['versionCompliant'] }}',
+            '{{ hostvars[item]['ds_data']['connected'] }}'
+            );
+      loop: "{{ ansible_play_hosts_all }}"
+      ignore_errors: true
+      when: hostvars[item]['ansible_facts']
+      run_once: true
+      delegate_to: "{{ management_server }}"
+      tags: [ insert_sql_rechable, never ]
+
+    - name: Insert data into the database for unreachable hosts
+      gwle_mssql_query:
+        dbname: "{{ dbname }}"
+        autocommit: true
+        query_type: insert
+        login_user: "{{ db_username }}"
+        login_password: "{{ db_password }}"
+        login_host: "{{ sql_server }}"
+        sql_query: >
+              INSERT INTO {{ table_name }}
+                (datetime_of_report, Hostname, FQDN, fireeyeStatus, fireeyeEnabled, fireeyeRunning, fireeyeVersion, fireeyeVersionCompliant, fireeyeConnected, nxlogStatus, nxlogEnabled, nxlogRunning, nxlogVersion, nxlogVersionCompliant, nxlogConnected, rapid7Status, rapid7Enabled, rapid7Running, rapid7Version, rapid7VersionCompliant, rapid7Connected, zabbixStatus, zabbix_enabled, zabbixRunning, zabbixVersion, zabbixVersionCompliant, zabbixConnected, dsStatus, dsEnabled, dsRunning, dsVersion, dsVersionCompliant, dsConnected)
+              VALUES('{{ datetime_localhost }}', '{{ item.split('.')[0] }}', '{{ item }}', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+      loop: "{{ ansible_play_hosts_all }}"
+      ignore_errors: true
+      run_once: true
+      when: not hostvars[item]['ansible_facts']
+      delegate_to: "{{ management_server }}"
+      tags: [ insert_sql_unrechable, never ]
+
